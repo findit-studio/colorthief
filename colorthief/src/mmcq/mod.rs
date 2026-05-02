@@ -87,24 +87,26 @@ impl VBox {
   }
 
   /// Pixel-count-weighted average of the box's bins, mapped back to
-  /// 8-bit RGB. Mirrors color-thief's TS `avg()` byte-for-byte: each
-  /// bin contributes `pop * (idx + 0.5) * 2^RSHIFT`, then we round
-  /// the per-channel mean down (`as u8` truncates positive floats).
+  /// 8-bit RGB. Each populated bin contributes
+  /// `pop * (idx + 0.5) * 2^RSHIFT` (the `+ 0.5` puts the contribution
+  /// at the bin center, which spans `2^RSHIFT` 8-bit values), then the
+  /// per-channel mean is truncated to `u8`.
+  ///
+  /// The TS reference (and earlier rounds of this Rust port) carried
+  /// a single-bin special case that returned `idx << RSHIFT` (the
+  /// bin's lower edge) instead of the centered formula. That biased
+  /// every solid-color or low-variance frame down by `2^(RSHIFT - 1)`
+  /// units — pure white mapped to `[248, 248, 248]` instead of
+  /// `[252, 252, 252]`. Codex adversarial-review round 4 flagged this
+  /// as a contract violation; we now route the single-bin case
+  /// through the general loop, which evaluates to the same centered
+  /// formula (the loop iterates exactly one bin and gives
+  /// `(idx + 0.5) * mult`).
   fn avg(&mut self, histo: &[u32]) -> [u8; 3] {
     if let Some(a) = self.avg_cache {
       return a;
     }
     let mult = 1u32 << RSHIFT;
-
-    if self.r1 == self.r2 && self.g1 == self.g2 && self.b1 == self.b2 {
-      let out = [
-        (self.r1 << RSHIFT) as u8,
-        (self.g1 << RSHIFT) as u8,
-        (self.b1 << RSHIFT) as u8,
-      ];
-      self.avg_cache = Some(out);
-      return out;
-    }
 
     let mut ntot: u64 = 0;
     let mut rsum: f64 = 0.0;
@@ -510,12 +512,63 @@ mod tests {
     let dominants = quantize(frame, 5);
     assert!(!dominants.is_empty(), "MMCQ produced zero dominants");
     let top = &dominants[0];
-    // The 5-bit quantization shifts pure red (255,0,0) → (31,0,0), and
-    // avg() maps it back via `bin << 3 = 248`. So the recovered red is
-    // 248-ish, not 255 exactly. Still squarely in the red region.
+    // 5-bit quantization shifts pure red (255,0,0) → bin (31,0,0).
+    // avg() returns the bin center: ((31 + 0.5) * 8, 4, 4) = (252, 4, 4).
     assert!(top.rgb[0] > 200, "expected R>200, got {:?}", top.rgb);
     assert!(top.rgb[1] < 30, "expected G<30, got {:?}", top.rgb);
     assert!(top.rgb[2] < 30, "expected B<30, got {:?}", top.rgb);
+  }
+
+  /// Codex adversarial-review round 4: pre-fix, the single-bin
+  /// shortcut in `avg()` returned `idx << RSHIFT` (the bin's lower
+  /// edge), which biased every solid-color frame down by half a bin
+  /// width. Pure white was reported as `[248, 248, 248]` instead of
+  /// the bin center `[252, 252, 252]`. After deleting the shortcut,
+  /// the general weighted-average path produces the correct centered
+  /// result for single-bin boxes.
+  #[test]
+  fn solid_white_recovered_at_bin_center() {
+    let pixels = vec![[255u8, 255, 255]; 16];
+    let buf = make_frame(4, 4, &pixels);
+    let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
+    let dominants = quantize(frame, 5);
+    let top = &dominants[0];
+    // bin (31, 31, 31); center = (31.5 * 8) = 252.
+    assert_eq!(top.rgb, [252, 252, 252], "expected bin-center white");
+  }
+
+  /// Pure black: bin (0, 0, 0); center = (0.5 * 8) = 4.
+  /// Pre-fix this was `[0, 0, 0]` (lower-edge bias).
+  #[test]
+  fn solid_black_recovered_at_bin_center() {
+    let pixels = vec![[0u8, 0, 0]; 16];
+    let buf = make_frame(4, 4, &pixels);
+    let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
+    let dominants = quantize(frame, 5);
+    let top = &dominants[0];
+    assert_eq!(top.rgb, [4, 4, 4], "expected bin-center black");
+  }
+
+  /// Two distinct 8-bit values that fall into the same 5-bit bin
+  /// must report the same dominant — the bin-center, not either of
+  /// the source values. Bin 1 covers 8-bit [8, 15] and centers on
+  /// `(1.5 * 8) = 12`. Pre-fix, both `[8,8,8]` and `[15,15,15]`
+  /// reported `[8, 8, 8]` (lower-edge bias).
+  #[test]
+  fn bin_edge_inputs_collapse_to_bin_center() {
+    for value in [8u8, 15u8] {
+      let pixels = vec![[value; 3]; 16];
+      let buf = make_frame(4, 4, &pixels);
+      let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
+      let dominants = quantize(frame, 5);
+      let top = &dominants[0];
+      assert_eq!(
+        top.rgb,
+        [12, 12, 12],
+        "input [{value};3] should collapse to bin-center [12;3], got {:?}",
+        top.rgb
+      );
+    }
   }
 
   #[test]
