@@ -37,7 +37,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+// `unsafe_code` is `deny`-not-`forbid` because `mmcq::simd` needs
+// per-arch `#[target_feature(enable = ...)]` SIMD intrinsics, which
+// require `unsafe`. Each arch submodule in `mmcq::simd` carries a
+// local `#[allow(unsafe_code)]`; that's the only place unsafe is
+// permitted.
+#![deny(unsafe_code)]
 
 pub use colorthief_dataset::{Color, Family, Kind};
 

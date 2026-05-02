@@ -20,6 +20,8 @@
 
 use crate::RgbFrame;
 
+mod simd;
+
 const SIGBITS: u32 = 5;
 const RSHIFT: u32 = 8 - SIGBITS;
 const HISTO_LEVELS: usize = 1 << SIGBITS; // 32
@@ -64,12 +66,20 @@ impl VBox {
     if let Some(c) = self.count_cache {
       return c;
     }
+    // Inner b-axis is contiguous in `histo` (`histo_index` puts `b`
+    // in the low bits). Hand each (r, g) row's bin slice to
+    // [`simd::sum_u32_slice`] which reduces the per-row sum on
+    // whichever SIMD backend the dispatcher selects (NEON / SSE4.1 /
+    // AVX2 / WASM SIMD128 / scalar). This is the bench-identified
+    // hottest path — see `benches/extract.rs` for the scaling profile
+    // that motivated targeting `count` first.
     let mut npix: u32 = 0;
     for r in self.r1..=self.r2 {
       for g in self.g1..=self.g2 {
-        for b in self.b1..=self.b2 {
-          npix = npix.saturating_add(histo[histo_index(r, g, b)]);
-        }
+        let lo = histo_index(r, g, self.b1);
+        let hi = histo_index(r, g, self.b2);
+        let row_sum = simd::sum_u32_slice(&histo[lo..=hi]);
+        npix = npix.saturating_add(row_sum);
       }
     }
     self.count_cache = Some(npix);

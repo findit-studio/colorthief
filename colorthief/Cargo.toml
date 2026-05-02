@@ -13,8 +13,12 @@ colorthief-dataset = { workspace = true }
 thiserror          = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
-criterion = "0.8"
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
 tempfile = "3"
+
+[[bench]]
+name = "extract"
+harness = false
 
 [package.metadata.docs.rs]
 all-features = true
