@@ -450,7 +450,19 @@ pub(crate) fn quantize(frame: RgbFrame<'_>, max_colors: u8) -> Vec<Dominant> {
   let mut boxes = vec![initial];
 
   // Phase 1: split by raw population.
-  let phase1_target = ((FRACT_BY_POPULATIONS * target as f64) as usize).max(1);
+  //
+  // The TS reference passes a fractional target to its `iterate` loop
+  // (e.g. `0.75 * 5 = 3.75`) and the inner `ncolors >= target` check
+  // effectively rounds the boundary up — phase 1 runs until 4 boxes,
+  // not 3. A bare `(... as usize)` cast (truncation toward zero) gave
+  // us 3 boxes, ending phase 1 early and ceding the next split to
+  // phase 2's `population * volume` ordering. For `count` values
+  // where `0.75 * count` has a fractional part (3, 5, 6, 7, 9, …),
+  // that lets phase 2 favour a sparse-wide box over a denser-compact
+  // one and silently changes the dominant set vs. the reference
+  // implementation. Use `ceil` to match the TS contract. (Codex
+  // adversarial review round 5, 2026-05-03.)
+  let phase1_target = (FRACT_BY_POPULATIONS * target as f64).ceil() as usize;
   iterate_split(&mut boxes, phase1_target, &histo, |b, h| b.count(h) as u64);
 
   // Phase 2: split by population * volume, finishing the split tree.

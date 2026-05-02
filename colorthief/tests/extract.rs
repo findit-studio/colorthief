@@ -145,6 +145,64 @@ fn extract_count_one_returns_at_most_one() {
   );
 }
 
+/// Regression for Codex adversarial-review round 5 finding [medium]:
+/// `phase1_target = (0.75 * count) as usize` truncated toward zero,
+/// so for `count` values with a fractional `0.75 * count` (3, 5, 6,
+/// 7, 9, …) phase 1 ended one box early vs. the TS reference's
+/// effective ceil semantics. That ceded a split to phase 2's
+/// `population * volume` scoring, which can pick a different box
+/// than phase 1's pure-population scoring. Without an external
+/// reference oracle to assert against, the regression here pins the
+/// count-exactness invariant at both fractional boundaries.
+///
+/// Helper: build an `n × n` frame whose `count` palette colors are
+/// each used in equal-area stripes.
+fn striped_palette_frame(palette: &[[u8; 3]], width: u32, height: u32) -> Vec<u8> {
+  let total = (width * height) as usize;
+  let mut buf = Vec::with_capacity(total * 3);
+  for i in 0..total {
+    buf.extend_from_slice(&palette[i % palette.len()]);
+  }
+  buf
+}
+
+#[test]
+fn extract_count_3_returns_full_count() {
+  // 3-color palette, count=3 → phase1 target = ceil(2.25) = 3.
+  // All splits decided by population scoring; phase 2 is a no-op.
+  let palette = [[200u8, 30, 30], [30, 200, 30], [30, 30, 200]];
+  let buf = striped_palette_frame(&palette, 8, 8);
+  let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+  let dominants = extract(frame, 3);
+  assert_eq!(dominants.len(), 3);
+  for d in &dominants {
+    assert!(d.population > 0);
+  }
+}
+
+#[test]
+fn extract_count_7_returns_full_count() {
+  // 7-color palette, count=7 → phase1 target = ceil(5.25) = 6.
+  // Phase 1 produces 6 boxes via population scoring; phase 2 adds
+  // the 7th via population*volume.
+  let palette = [
+    [200u8, 30, 30],
+    [30, 200, 30],
+    [30, 30, 200],
+    [200, 200, 30],
+    [30, 200, 200],
+    [200, 30, 200],
+    [128, 128, 128],
+  ];
+  let buf = striped_palette_frame(&palette, 8, 8);
+  let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+  let dominants = extract(frame, 7);
+  assert_eq!(dominants.len(), 7);
+  for d in &dominants {
+    assert!(d.population > 0);
+  }
+}
+
 /// Regression for Codex adversarial-review round 2 finding [high]:
 /// `iterate_split` was counting empty children of a sparse box's
 /// median-cut split toward `target`, so when the frame had `count`
