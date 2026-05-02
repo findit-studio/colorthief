@@ -1,0 +1,37 @@
+[package]
+name = "colorthief"
+version = "0.0.0"
+edition = "2024"
+description = "Dominant-color extraction (MMCQ) and human-vocabulary naming (CIEDE2000 nearest-neighbor against the xkcd hierarchy) for Rgb24Frame video keyframes."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version = "1.85.0"
+
+[[bench]]
+path = "benches/foo.rs"
+name = "foo"
+harness = false
+
+[features]
+default = ["std"]
+alloc = []
+std = []
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.8"
+tempfile = "3"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+rust_2018_idioms = "warn"
+single_use_lifetimes = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(all_tests)',
+  'cfg(tarpaulin)',
+] }
