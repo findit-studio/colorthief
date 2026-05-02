@@ -143,10 +143,12 @@ pub(crate) fn rgb_to_lab(rgb: [u8; 3]) -> [f32; 3] {
   let g = srgb_to_linear(rgb[1] as f32 / 255.0);
   let b = srgb_to_linear(rgb[2] as f32 / 255.0);
 
-  // sRGB → XYZ (D65, 2°). Coefficients from IEC 61966-2-1.
+  // sRGB → XYZ (D65, 2°). Coefficients from IEC 61966-2-1, rounded to
+  // f32 precision (~7 decimal digits — trailing zeros that clippy flagged
+  // as excessive precision are dropped here).
   let x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
-  let y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
-  let z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041;
+  let y = r * 0.2126729 + g * 0.7151522 + b * 0.072175;
+  let z = r * 0.0193339 + g * 0.119192 + b * 0.9503041;
 
   // D65 reference white (CIE 1931, 2°).
   const XN: f32 = 0.95047;
@@ -204,6 +206,58 @@ mod tests {
   #[test]
   fn dataset_is_non_empty() {
     assert!(!COLORS.is_empty());
+  }
+
+  /// Snapshot the entry count. Acts as a canary if upstream colornamer
+  /// updates the CSV: a count change is a deliberate regen, not a silent
+  /// drift. Updating this number is the right action when intentional.
+  #[test]
+  fn dataset_entry_count_matches_csv() {
+    assert_eq!(
+      COLORS.len(),
+      949,
+      "regenerate via `cargo xtask codegen` if the upstream CSV changed",
+    );
+  }
+
+  /// Pure sRGB red must map to an entry that's at least red-flavored.
+  /// Strict equality on the xkcd label is fragile (the closest match
+  /// depends on the palette and could be `"red"`, `"bright red"`,
+  /// `"true red"`, etc.); the family is a stable invariant.
+  #[test]
+  fn nearest_to_pure_red_is_in_red_family() {
+    let c = Color::nearest_to([255, 0, 0]);
+    assert!(
+      c.family().contains("red") || c.name().contains("red"),
+      "nearest to pure red was name={:?} family={:?}",
+      c.name(),
+      c.family(),
+    );
+  }
+
+  /// Pure sRGB blue must map to a blue-family entry.
+  #[test]
+  fn nearest_to_pure_blue_is_in_blue_family() {
+    let c = Color::nearest_to([0, 0, 255]);
+    assert!(
+      c.family().contains("blue") || c.name().contains("blue"),
+      "nearest to pure blue was name={:?} family={:?}",
+      c.name(),
+      c.family(),
+    );
+  }
+
+  /// Mid-gray must map to a neutral. Tests that the `is_neutral` axis
+  /// reaches readers correctly via the lookup path.
+  #[test]
+  fn nearest_to_mid_gray_is_neutral() {
+    let c = Color::nearest_to([128, 128, 128]);
+    assert!(
+      c.is_neutral(),
+      "nearest to (128,128,128) was name={:?} is_neutral={}",
+      c.name(),
+      c.is_neutral(),
+    );
   }
 
   /// sRGB → LAB on the D65 reference white must produce L=100, a=0, b=0
