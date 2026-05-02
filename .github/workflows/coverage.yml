@@ -1,0 +1,136 @@
+name: coverage
+
+# Per-tier coverage matrix mirroring colconv's pattern. The standard
+# coverage job in `ci.yml` reports the dispatcher's *natural* tier on
+# the runner (whichever SIMD level the host CPU supports). To get
+# Codecov to reflect the full SIMD cascade — including the SSE4.1
+# branch on a runner that natively prefers AVX2, and the scalar
+# fallback on every arch — each matrix entry runs tarpaulin under a
+# different `RUSTFLAGS` cfg combination.
+#
+# - aarch64 (macOS): default → covers `aarch64_neon.rs` plus the
+#   aarch64 NEON branch of the dispatcher.
+# - aarch64 scalar-forced: `--cfg colorthief_force_scalar` → covers
+#   the scalar fallback branch on aarch64 (otherwise unreachable
+#   because NEON is mandatory in Armv8-A).
+# - x86_64 default (Linux): covers whichever top tier the runner CPU
+#   supports (typically AVX2 on Github-hosted Ubuntu).
+# - x86_64 SSE4.1-max: `--cfg colorthief_disable_avx2` → forces the
+#   SSE4.1 branch of the dispatcher and the SSE4.1 kernel even on
+#   AVX2-capable runners.
+# - x86_64 scalar-forced: `--cfg colorthief_force_scalar` → covers
+#   the scalar branch on x86_64.
+#
+# Each platform `--exclude-files`-out the SIMD modules it can't
+# compile (gated behind `cfg(target_arch = ...)`). Without exclusion,
+# tarpaulin would count them as 0/N uncovered lines on that platform,
+# dragging down the per-platform percentage. Codecov merges flagged
+# uploads, so the final dashboard shows the union of every tier's
+# reports.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE-*'
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE-*'
+      - '**.md'
+      - '**.txt'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: coverage (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---- aarch64 (macOS) ----
+          - os: macos-latest
+            label: macos-aarch64
+            rustflags: '--cfg tarpaulin'
+            exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/x86_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
+          - os: macos-latest
+            label: macos-aarch64-scalar
+            rustflags: '--cfg tarpaulin --cfg colorthief_force_scalar'
+            exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/x86_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
+
+          # ---- x86_64 (Linux) ----
+          - os: ubuntu-latest
+            label: linux-x86_64
+            rustflags: '--cfg tarpaulin'
+            exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/aarch64_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
+          - os: ubuntu-latest
+            label: linux-x86_64-sse41-max
+            rustflags: '--cfg tarpaulin --cfg colorthief_disable_avx2'
+            exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/aarch64_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
+          - os: ubuntu-latest
+            label: linux-x86_64-scalar
+            rustflags: '--cfg tarpaulin --cfg colorthief_force_scalar'
+            exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/aarch64_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Generate coverage
+        shell: bash
+        run: |
+          mkdir -p coverage
+          cargo tarpaulin \
+            --workspace \
+            --run-types tests \
+            --exclude-files 'benches/*' \
+            --exclude-files 'xtask/*' \
+            ${{ matrix.exclude_arch }} \
+            --out xml \
+            --output-dir coverage
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.label }}
+          path: coverage/cobertura.xml
+
+  upload-codecov:
+    name: Upload merged coverage to Codecov
+    needs: coverage
+    runs-on: ubuntu-latest
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        label:
+          - macos-aarch64
+          - macos-aarch64-scalar
+          - linux-x86_64
+          - linux-x86_64-sse41-max
+          - linux-x86_64-scalar
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download ${{ matrix.label }} report
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-${{ matrix.label }}
+          path: coverage/
+      - name: Upload ${{ matrix.label }} to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          files: coverage/cobertura.xml
+          flags: ${{ matrix.label }}
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

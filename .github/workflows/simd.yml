@@ -1,0 +1,145 @@
+name: SIMD
+
+# SIMD-specific verification jobs that don't fit the generic
+# `ci.yml` template. Mirrors the per-tier execution + idempotency
+# patterns from colconv's CI:
+#
+# - `codegen-up-to-date`: re-run `cargo xtask codegen` and fail if
+#   `colorthief-dataset/src/generated.rs` would change. Catches drift
+#   between `assets/color_hierarchy.csv` and the committed generated
+#   file (including the SoA `LABS_*` arrays the SIMD backends depend
+#   on).
+#
+# - `test-force-scalar`: re-run the test suite with `--cfg
+#   colorthief_force_scalar`, which short-circuits every SIMD backend
+#   in the dispatcher cascade. Catches regressions where shared logic
+#   accidentally moves into a SIMD module — under this cfg every test
+#   must pass entirely on the scalar reference.
+#
+# - `test-disable-avx2-x86_64`: forces the x86_64 dispatcher to skip
+#   AVX2 and fall through to SSE4.1 (or scalar if SSE4.1 is also
+#   absent at runtime). On runners whose CPU supports both tiers, this
+#   is the only way to actually exercise the SSE4.1 path.
+#
+# - `test-wasm-simd128`: runs the dataset crate's lib tests under
+#   wasmtime with `-C target-feature=+simd128`. Without this job the
+#   `wasm_simd128` backend is dispatchable in production but never
+#   runtime-verified — the generic `cross` job in `ci.yml` only proves
+#   it compiles.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE-*'
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE-*'
+      - '**.md'
+      - '**.txt'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUST_BACKTRACE: 1
+
+jobs:
+  # `cargo xtask codegen` must be idempotent: re-running it should
+  # produce a `generated.rs` byte-identical to what's committed.
+  # Catches drift between `assets/color_hierarchy.csv` and the
+  # checked-in generated source.
+  codegen-up-to-date:
+    name: codegen-up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup update stable && rustup default stable && rustup component add rustfmt
+      - name: cargo xtask codegen
+        run: cargo xtask codegen
+      - name: git diff --quiet -- generated.rs
+        run: |
+          if ! git diff --quiet -- colorthief-dataset/src/generated.rs; then
+            echo "::error::generated.rs is out of sync with assets/color_hierarchy.csv — run 'cargo xtask codegen' and commit the result."
+            git diff -- colorthief-dataset/src/generated.rs
+            exit 1
+          fi
+
+  # Force the scalar fallback path on every backend. NEON is mandatory
+  # in Armv8-A (so the dispatcher would otherwise always pick it on
+  # macOS-aarch64); `--cfg colorthief_force_scalar` short-circuits
+  # every SIMD branch.
+  test-force-scalar:
+    name: test (force-scalar, ${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: '--cfg colorthief_force_scalar -Dwarnings'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: cargo test --workspace (force-scalar)
+        run: cargo test --workspace
+
+  # On x86_64, `--cfg colorthief_disable_avx2` makes the dispatcher
+  # skip the AVX2 tier so it falls through to SSE4.1 (or scalar if
+  # SSE4.1 is also unavailable at runtime). On runners whose CPU
+  # supports both AVX2 and SSE4.1, this is the only way to exercise
+  # the SSE4.1 backend's parity test in `nearest::tests`.
+  test-disable-avx2-x86_64:
+    name: test (disable-avx2, x86_64)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: '--cfg colorthief_disable_avx2 -Dwarnings'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+      - name: cargo test --workspace (disable-avx2)
+        run: cargo test --workspace
+
+  # Run the colorthief-dataset lib tests under wasmtime with SIMD128
+  # enabled. The generic `cross` job in `ci.yml` only verifies wasm
+  # cross-compile; this job runs every parity test against an actual
+  # WASM runtime so the `wasm_simd128` backend is execution-verified.
+  test-wasm-simd128:
+    name: test-wasm-simd128
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache cargo build and registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-test-wasm-simd128-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-wasm-simd128-
+      - name: Install Rust + wasm32-wasip1
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add wasm32-wasip1
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+      - name: Run lib tests under wasmtime (simd128)
+        env:
+          # `cargo test` hands the compiled `.wasm` test binary as the
+          # first positional arg after `--`; `wasmtime run --`
+          # interprets that as the module path. Pure-compute tests
+          # don't need filesystem or env access.
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime run --
+          RUSTFLAGS: -C target-feature=+simd128
+        run: cargo test -p colorthief-dataset --lib --target wasm32-wasip1

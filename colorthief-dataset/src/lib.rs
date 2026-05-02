@@ -31,11 +31,48 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+// `unsafe_code` is `deny`-not-`forbid` because the per-arch NEON kernel in
+// `nearest::aarch64_neon` needs `unsafe` to call `core::arch::aarch64`
+// intrinsics (the NEON entry function is `#[target_feature(enable = "neon")]`
+// and therefore `unsafe fn`). That module carries a local
+// `#[allow(unsafe_code)]` and is the ONLY place unsafe code is allowed.
+#![deny(unsafe_code)]
 
 mod generated;
+mod nearest;
 
 pub use generated::{COLORS, Family, Kind};
+
+/// **Not a stable API.**
+///
+/// Hidden helpers used by `colorthief-dataset/benches/nearest.rs` to
+/// compare backends head-to-head. Calling these directly bypasses the
+/// dispatcher in [`Color::nearest_to`] — production code should use
+/// the public method.
+#[doc(hidden)]
+pub mod __bench {
+  pub use crate::nearest::scalar::nearest_idx as scalar_nearest_idx;
+
+  #[cfg(target_arch = "aarch64")]
+  pub use crate::nearest::aarch64_neon::nearest_idx as aarch64_neon_nearest_idx;
+
+  // x86 backends are `unsafe fn` (the `#[target_feature]` attribute
+  // enforces the safety boundary). Re-export them as-is — the bench
+  // wraps the `unsafe { ... }` after a runtime feature check.
+  #[cfg(target_arch = "x86_64")]
+  pub use crate::nearest::x86_avx2::nearest_idx as x86_avx2_nearest_idx;
+  #[cfg(target_arch = "x86_64")]
+  pub use crate::nearest::x86_sse41::nearest_idx as x86_sse41_nearest_idx;
+
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  pub use crate::nearest::wasm_simd128::nearest_idx as wasm_simd128_nearest_idx;
+
+  /// Public re-export of the crate-private `rgb_to_lab` so benches can
+  /// pre-convert RGB queries without duplicating the math.
+  pub fn rgb_to_lab(rgb: [u8; 3]) -> [f32; 3] {
+    super::rgb_to_lab(rgb)
+  }
+}
 
 /// One named entry in the xkcd color hierarchy.
 ///
@@ -165,21 +202,13 @@ impl Color {
   /// RGB (Delta E 76).
   ///
   /// Always returns an entry — `COLORS` is non-empty and verified at
-  /// codegen time.
+  /// codegen time. On `target_arch = "aarch64"` the scan is dispatched
+  /// to a NEON backend that processes 4 palette entries per iteration;
+  /// other targets fall through to the scalar reference. Both backends
+  /// produce bit-identical results — see [`crate::nearest`] for the
+  /// dispatch contract and parity tests.
   pub fn nearest_to(rgb: [u8; 3]) -> &'static Color {
-    let query = rgb_to_lab(rgb);
-    let (mut best, rest) = COLORS
-      .split_first()
-      .expect("colorthief-dataset must have at least one entry");
-    let mut best_d2 = lab_distance_sq(query, best.lab);
-    for entry in rest {
-      let d2 = lab_distance_sq(query, entry.lab);
-      if d2 < best_d2 {
-        best = entry;
-        best_d2 = d2;
-      }
-    }
-    best
+    crate::nearest::nearest(rgb_to_lab(rgb))
   }
 }
 
@@ -234,15 +263,6 @@ fn lab_f(t: f32) -> f32 {
   } else {
     KAPPA_OVER_3 * t + OFFSET
   }
-}
-
-/// Squared Euclidean distance in LAB. Squared, not square-rooted —
-/// preserves ordering and saves a `sqrt` per query.
-fn lab_distance_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
-  let dl = a[0] - b[0];
-  let da = a[1] - b[1];
-  let db = a[2] - b[2];
-  dl * dl + da * da + db * db
 }
 
 #[cfg(test)]

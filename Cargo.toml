@@ -33,7 +33,14 @@ rpath = false
 [workspace.lints.rust]
 rust_2018_idioms = "warn"
 single_use_lifetimes = "warn"
+# `colorthief_force_scalar` and `colorthief_disable_avx2` are coverage-side
+# tier-forcing flags consumed by `colorthief-dataset/src/nearest/mod.rs`
+# (mirrors colconv's `--cfg colconv_force_scalar` etc.). Coverage workflows
+# pass them via `RUSTFLAGS` to exercise each branch of the SIMD dispatch
+# cascade — see `.github/workflows/coverage.yml`.
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(all_tests)',
   'cfg(tarpaulin)',
+  'cfg(colorthief_force_scalar)',
+  'cfg(colorthief_disable_avx2)',
 ] }

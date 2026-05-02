@@ -86,9 +86,15 @@ fn codegen() {
   let kind_variants = collect_enum_variants(&rows, |r| &r.color_type, "color_type");
 
   // 2b. Build per-entry tokens; track ident uniqueness as we go.
+  // SoA accumulators feed `LABS_L`/`LABS_A`/`LABS_B` — the NEON
+  // `nearest_to` backend reads these as dense `vld1q_f32` chunks rather
+  // than gathering through `&[&Color]` indirection.
   let mut seen_idents = HashSet::<String>::new();
   let mut consts: Vec<TokenStream> = Vec::with_capacity(rows.len());
   let mut idents: Vec<syn::Ident> = Vec::with_capacity(rows.len());
+  let mut labs_l: Vec<TokenStream> = Vec::with_capacity(rows.len());
+  let mut labs_a: Vec<TokenStream> = Vec::with_capacity(rows.len());
+  let mut labs_b: Vec<TokenStream> = Vec::with_capacity(rows.len());
   for row in &rows {
     let ident = name_to_const_ident(&row.xkcd_color);
     if !seen_idents.insert(ident.to_string()) {
@@ -107,6 +113,9 @@ fn codegen() {
     let l_lit = float_lit(lab[0]);
     let a_lit = float_lit(lab[1]);
     let b_lit = float_lit(lab[2]);
+    labs_l.push(l_lit.clone());
+    labs_a.push(a_lit.clone());
+    labs_b.push(b_lit.clone());
 
     let xkcd_name = &row.xkcd_color;
     let xkcd_hex = &row.xkcd_color_hex;
@@ -157,6 +166,10 @@ fn codegen() {
     "Color kind / texture classification",
     "color_type",
   );
+  let labs_doc = " Structure-of-arrays projection of every entry's pre-computed LAB \
+                   channel, in the same index order as [`COLORS`]. Used by the \
+                   `nearest` module's NEON backend so per-component loads are dense \
+                   `vld1q_f32`s rather than gathers through `&[&Color]`.";
   let body = quote! {
     use super::Color;
 
@@ -170,6 +183,13 @@ fn codegen() {
     pub static COLORS: &[&Color] = &[
       #(#idents),*
     ];
+
+    #[doc = #labs_doc]
+    pub(crate) static LABS_L: &[f32] = &[#(#labs_l),*];
+    #[doc = #labs_doc]
+    pub(crate) static LABS_A: &[f32] = &[#(#labs_a),*];
+    #[doc = #labs_doc]
+    pub(crate) static LABS_B: &[f32] = &[#(#labs_b),*];
   };
 
   let pretty = prettyplease::unparse(

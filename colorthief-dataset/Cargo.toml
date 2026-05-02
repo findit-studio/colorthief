@@ -27,6 +27,13 @@ std = []
 # configuration. Pure Rust, ~10 KB, dependency-free itself.
 libm = { version = "0.2", default-features = false }
 
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
+
+[[bench]]
+name = "nearest"
+harness = false
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
