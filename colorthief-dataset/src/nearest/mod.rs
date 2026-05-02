@@ -52,6 +52,10 @@ use crate::{
 
 pub(crate) mod scalar;
 
+/// CIEDE2000 — scalar-only on every target. See [`ciede2000`] for why
+/// SIMD isn't worth pursuing here.
+pub(crate) mod ciede2000;
+
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64_neon;
 
@@ -142,6 +146,15 @@ pub(crate) fn nearest_idx(query: [f32; 3]) -> usize {
 #[inline]
 pub(crate) fn nearest(query: [f32; 3]) -> &'static Color {
   COLORS[nearest_idx(query)]
+}
+
+/// CIEDE2000 nearest-neighbor convenience wrapper used by
+/// [`crate::Color::nearest_to_ciede2000`]. Always scalar; CIEDE2000's
+/// `atan2` / `sin` / `exp` / branchy hue wraparound don't vectorise
+/// usefully on any of our SIMD backends.
+#[inline]
+pub(crate) fn nearest_ciede2000(query: [f32; 3]) -> &'static Color {
+  COLORS[ciede2000::nearest_idx(query)]
 }
 
 #[cfg(test)]

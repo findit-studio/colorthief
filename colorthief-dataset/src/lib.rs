@@ -51,7 +51,9 @@ pub use generated::{COLORS, Family, Kind};
 /// the public method.
 #[doc(hidden)]
 pub mod __bench {
-  pub use crate::nearest::scalar::nearest_idx as scalar_nearest_idx;
+  pub use crate::nearest::{
+    ciede2000::nearest_idx as ciede2000_nearest_idx, scalar::nearest_idx as scalar_nearest_idx,
+  };
 
   #[cfg(target_arch = "aarch64")]
   pub use crate::nearest::aarch64_neon::nearest_idx as aarch64_neon_nearest_idx;
@@ -199,16 +201,45 @@ impl Color {
   }
 
   /// Find the entry whose pre-computed LAB is closest to the given query
-  /// RGB (Delta E 76).
+  /// RGB by **Delta E 76** (squared Euclidean LAB).
   ///
   /// Always returns an entry — `COLORS` is non-empty and verified at
-  /// codegen time. On `target_arch = "aarch64"` the scan is dispatched
-  /// to a NEON backend that processes 4 palette entries per iteration;
-  /// other targets fall through to the scalar reference. Both backends
-  /// produce bit-identical results — see [`crate::nearest`] for the
+  /// codegen time. The scan dispatches to a per-arch SIMD backend
+  /// (NEON / AVX2 / SSE4.1 / WASM SIMD128) on every target that has
+  /// one; other targets fall through to the scalar reference. Every
+  /// backend is bit-identical — see [`crate::nearest`] for the
   /// dispatch contract and parity tests.
+  ///
+  /// # When to use this vs. [`Self::nearest_to_ciede2000`]
+  ///
+  /// Delta E 76 is the **default** for a reason: against this
+  /// crate's well-clustered 949-entry xkcd palette it picks the same
+  /// named entry as CIEDE2000 in the overwhelming majority of cases,
+  /// runs ~2× over scalar on aarch64 NEON, and has bit-identical
+  /// SIMD parity. Reach for [`Self::nearest_to_ciede2000`] only when
+  /// you've measured Delta E 76 mis-naming colours on real footage,
+  /// typically near the gray / yellow boundary.
   pub fn nearest_to(rgb: [u8; 3]) -> &'static Color {
     crate::nearest::nearest(rgb_to_lab(rgb))
+  }
+
+  /// Find the entry whose pre-computed LAB is closest to the given
+  /// query RGB by **CIEDE2000** — the modern perceptual gold-standard
+  /// colour-difference formula.
+  ///
+  /// CIEDE2000 corrects Delta E 76's known biases (over-weighting
+  /// yellows, under-weighting blues, hue-rotation in the saturated
+  /// blue region). The cost: it pulls in `atan2` / `sin` / `cos` /
+  /// `exp` / branchy hue-wraparound logic, which combine to be
+  /// ~5–10× slower than [`Self::nearest_to`] per query.
+  ///
+  /// **Scalar-only** by design: see [`crate::nearest::ciede2000`] for
+  /// the rationale (transcendentals don't vectorise cleanly on any
+  /// 128/256-bit ISA we target). Reach for this when you've measured
+  /// drift on real footage and need the accuracy more than the
+  /// throughput; otherwise prefer [`Self::nearest_to`].
+  pub fn nearest_to_ciede2000(rgb: [u8; 3]) -> &'static Color {
+    crate::nearest::nearest_ciede2000(rgb_to_lab(rgb))
   }
 }
 

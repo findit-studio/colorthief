@@ -41,12 +41,24 @@ fn bench_nearest_idx(c: &mut Criterion) {
   // Set throughput so criterion reports time-per-element.
   group.throughput(criterion::Throughput::Elements(1));
 
-  // Scalar baseline — always present.
+  // Delta E 76 scalar baseline — always present.
   group.bench_function("scalar", |b| {
     let mut iter = queries.iter().cycle();
     b.iter(|| {
       let q = *iter.next().unwrap();
       black_box(__bench::scalar_nearest_idx(black_box(q)))
+    })
+  });
+
+  // CIEDE2000 scalar — the perceptual gold-standard distance metric.
+  // Scalar-only by design (atan2 / sin / cos / exp don't vectorise
+  // cleanly). Bench expectation: ~5–10× slower than the Delta E 76
+  // scalar baseline per the formula's transcendental count.
+  group.bench_function("ciede2000_scalar", |b| {
+    let mut iter = queries.iter().cycle();
+    b.iter(|| {
+      let q = *iter.next().unwrap();
+      black_box(__bench::ciede2000_nearest_idx(black_box(q)))
     })
   });
 
