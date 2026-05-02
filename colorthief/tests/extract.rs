@@ -23,29 +23,32 @@ fn solid_color_frame(rgb: [u8; 3], width: u32, height: u32) -> Vec<u8> {
 fn extract_on_solid_red_returns_a_red_named_color() {
   let buf = solid_color_frame([255, 0, 0], 8, 8);
   let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
-  let colors = extract(&frame, 5);
-  assert!(!colors.is_empty(), "expected at least one named color");
-  let top = colors[0];
+  let dominants = extract(frame, 5);
+  assert!(!dominants.is_empty(), "expected at least one dominant");
+  let top = dominants[0];
   assert!(
-    top.family().contains("red") || top.name().contains("red"),
-    "top dominant on solid red was name={:?} family={:?}",
-    top.name(),
-    top.family(),
+    top.color.family().as_str().contains("red") || top.color.name().contains("red"),
+    "top dominant on solid red was rgb={:?} name={:?} family={:?}",
+    top.rgb,
+    top.color.name(),
+    top.color.family().as_str(),
   );
+  assert!(top.population > 0, "population must be non-zero");
 }
 
 #[test]
 fn extract_on_solid_blue_returns_a_blue_named_color() {
   let buf = solid_color_frame([0, 0, 255], 8, 8);
   let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
-  let colors = extract(&frame, 5);
-  assert!(!colors.is_empty());
-  let top = colors[0];
+  let dominants = extract(frame, 5);
+  assert!(!dominants.is_empty());
+  let top = dominants[0];
   assert!(
-    top.family().contains("blue") || top.name().contains("blue"),
-    "top dominant on solid blue was name={:?} family={:?}",
-    top.name(),
-    top.family(),
+    top.color.family().as_str().contains("blue") || top.color.name().contains("blue"),
+    "top dominant on solid blue was rgb={:?} name={:?} family={:?}",
+    top.rgb,
+    top.color.name(),
+    top.color.family().as_str(),
   );
 }
 
@@ -53,8 +56,8 @@ fn extract_on_solid_blue_returns_a_blue_named_color() {
 fn extract_count_zero_returns_empty() {
   let buf = solid_color_frame([128, 128, 128], 4, 4);
   let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-  let colors = extract(&frame, 0);
-  assert!(colors.is_empty());
+  let dominants = extract(frame, 0);
+  assert!(dominants.is_empty());
 }
 
 #[test]
@@ -69,17 +72,52 @@ fn extract_on_red_blue_split_recovers_both_hues() {
     }
   }
   let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
-  let colors = extract(&frame, 5);
-  assert!(colors.len() >= 2);
-  let has_red = colors
+  let dominants = extract(frame, 5);
+  assert!(dominants.len() >= 2);
+  let has_red = dominants
     .iter()
-    .any(|c| c.family().contains("red") || c.name().contains("red"));
-  let has_blue = colors
+    .any(|d| d.color.family().as_str().contains("red") || d.color.name().contains("red"));
+  let has_blue = dominants
     .iter()
-    .any(|c| c.family().contains("blue") || c.name().contains("blue"));
+    .any(|d| d.color.family().as_str().contains("blue") || d.color.name().contains("blue"));
   assert!(
     has_red && has_blue,
     "expected red and blue named entries, got: {:?}",
-    colors.iter().map(|c| c.name()).collect::<Vec<_>>()
+    dominants
+      .iter()
+      .map(|d| (d.color.name(), d.rgb, d.population))
+      .collect::<Vec<_>>()
+  );
+}
+
+/// Pins the population-descending sort on the public API.
+#[test]
+fn extract_dominants_sorted_by_population_descending() {
+  // 8x8 frame: 75% red, 25% blue. Red must come first.
+  let mut buf = Vec::with_capacity(64 * 3);
+  for row in 0..8 {
+    for _ in 0..8 {
+      let rgb = if row < 6 { [255, 0, 0] } else { [0, 0, 255] };
+      buf.extend_from_slice(&rgb);
+    }
+  }
+  let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+  let dominants = extract(frame, 5);
+  assert!(dominants.len() >= 2);
+  for window in dominants.windows(2) {
+    assert!(
+      window[0].population >= window[1].population,
+      "dominants must be sorted by descending population: {:?}",
+      dominants
+        .iter()
+        .map(|d| (d.color.name(), d.population))
+        .collect::<Vec<_>>()
+    );
+  }
+  let top = dominants[0];
+  assert!(
+    top.color.family().as_str().contains("red") || top.color.name().contains("red"),
+    "75%-red frame: top dominant should be red, got {:?}",
+    top.color.name()
   );
 }

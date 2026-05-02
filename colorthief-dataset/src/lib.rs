@@ -35,18 +35,29 @@
 
 mod generated;
 
-pub use generated::COLORS;
+pub use generated::{COLORS, Family, Kind};
 
 /// One named entry in the xkcd color hierarchy.
+///
+/// Carries every column from the upstream `color_hierarchy.csv`:
+/// xkcd / design / common name, hex, and RGB triples for each level,
+/// plus the family / kind / neutrality classification. The xkcd LAB
+/// triple is pre-computed at codegen time for nearest-neighbor lookup
+/// in [`Self::nearest_to`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
   pub(crate) name: &'static str,
+  pub(crate) hex: &'static str,
   pub(crate) rgb: [u8; 3],
   pub(crate) lab: [f32; 3],
   pub(crate) design_name: &'static str,
+  pub(crate) design_hex: &'static str,
+  pub(crate) design_rgb: [u8; 3],
   pub(crate) common_name: &'static str,
-  pub(crate) family: &'static str,
-  pub(crate) kind: &'static str,
+  pub(crate) common_hex: &'static str,
+  pub(crate) common_rgb: [u8; 3],
+  pub(crate) family: Family,
+  pub(crate) kind: Kind,
   pub(crate) is_neutral: bool,
 }
 
@@ -58,16 +69,23 @@ impl Color {
     self.name
   }
 
-  /// xkcd RGB triple, e.g. `[189, 108, 72]`.
+  /// xkcd hex string, e.g. `"#bd6c48"`.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn hex(&self) -> &'static str {
+    self.hex
+  }
+
+  /// xkcd RGB triple, e.g. `[189, 108, 72]`. The exact 8-bit value the
+  /// xkcd survey reports for this name.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn rgb(&self) -> [u8; 3] {
     self.rgb
   }
 
-  /// Pre-computed CIE LAB (D65 illuminant, 2° observer) for the entry's
-  /// RGB. Used internally by [`Self::nearest_to`]; exposed publicly so
-  /// callers can implement their own distance metric (e.g. CIEDE2000) on
-  /// top of the same cached values.
+  /// Pre-computed CIE LAB (D65 illuminant, 2° observer) for [`Self::rgb`].
+  /// Used internally by [`Self::nearest_to`]; exposed publicly so callers
+  /// can implement their own distance metric (e.g. CIEDE2000) on top of
+  /// the same cached values.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn lab(&self) -> [f32; 3] {
     self.lab
@@ -79,6 +97,21 @@ impl Color {
     self.design_name
   }
 
+  /// Hex string for the design-palette anchor color.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn design_hex(&self) -> &'static str {
+    self.design_hex
+  }
+
+  /// RGB triple for the design-palette anchor color (the canonical
+  /// 8-bit representation of [`Self::design_name`]). Differs from
+  /// [`Self::rgb`] when the xkcd entry sits at the edge of its
+  /// design-palette bucket.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn design_rgb(&self) -> [u8; 3] {
+    self.design_rgb
+  }
+
   /// Coarser still common name (~120 unique, e.g. `"sienna"`). The
   /// search-friendly default for indexing pipelines.
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -86,15 +119,31 @@ impl Color {
     self.common_name
   }
 
-  /// Color family (26 values, e.g. `"blue green"`, `"neutral"`).
+  /// Hex string for the common-name anchor color.
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn family(&self) -> &'static str {
+  pub const fn common_hex(&self) -> &'static str {
+    self.common_hex
+  }
+
+  /// RGB triple for the common-name anchor color.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn common_rgb(&self) -> [u8; 3] {
+    self.common_rgb
+  }
+
+  /// Color family classification (26 values, e.g. [`Family::Yellow`],
+  /// [`Family::BlueGreen`], [`Family::Neutral`]). Call
+  /// [`Family::as_str`] for the original CSV string.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn family(&self) -> Family {
     self.family
   }
 
-  /// Color type (11 values, e.g. `"neon color"`, `"painterly neutral"`).
+  /// Color kind / texture classification (11 values, e.g.
+  /// [`Kind::NeonColor`], [`Kind::PainterlyNeutral`]). Call
+  /// [`Kind::as_str`] for the original CSV string.
   #[cfg_attr(not(tarpaulin), inline(always))]
-  pub const fn kind(&self) -> &'static str {
+  pub const fn kind(&self) -> Kind {
     self.kind
   }
 
@@ -228,10 +277,10 @@ mod tests {
   fn nearest_to_pure_red_is_in_red_family() {
     let c = Color::nearest_to([255, 0, 0]);
     assert!(
-      c.family().contains("red") || c.name().contains("red"),
+      c.family().as_str().contains("red") || c.name().contains("red"),
       "nearest to pure red was name={:?} family={:?}",
       c.name(),
-      c.family(),
+      c.family().as_str(),
     );
   }
 
@@ -240,10 +289,10 @@ mod tests {
   fn nearest_to_pure_blue_is_in_blue_family() {
     let c = Color::nearest_to([0, 0, 255]);
     assert!(
-      c.family().contains("blue") || c.name().contains("blue"),
+      c.family().as_str().contains("blue") || c.name().contains("blue"),
       "nearest to pure blue was name={:?} family={:?}",
       c.name(),
-      c.family(),
+      c.family().as_str(),
     );
   }
 

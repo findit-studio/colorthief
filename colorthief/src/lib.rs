@@ -5,14 +5,16 @@
 //!
 //! 1. [`extract`] runs MMCQ (Modified Median Cut Quantization) over the
 //!    pixels of an [`RgbFrame`], producing up to `count` dominant RGB
-//!    values.
+//!    values plus the pixel population behind each.
 //! 2. Each dominant is mapped to its nearest entry in
 //!    [`colorthief_dataset`]'s xkcd-hierarchy table via Delta E 76 (LAB
 //!    Euclidean) distance.
 //!
-//! The result is a `Vec<&'static Color>` — the caller picks which name
-//! level (`name()`, `common_name()`, `family()`, …) is right for their
-//! search-vocabulary needs.
+//! The result is a `Vec<`[`Dominant`]`>` carrying both the actual
+//! extracted RGB (for swatch rendering) and the named [`Color`] (for
+//! search-vocabulary), sorted descending by `population`. The caller
+//! picks which name level (`name()`, `common_name()`, `family()`, …)
+//! is right for their indexing needs.
 //!
 //! # Frame input
 //!
@@ -42,6 +44,31 @@ pub use colorthief_dataset::Color;
 mod mmcq;
 
 use thiserror::Error;
+
+/// One entry in an [`extract`] result: the actual MMCQ-extracted RGB,
+/// the closest xkcd-hierarchy [`Color`] for naming, and the pixel-count
+/// weight behind that color.
+///
+/// `rgb` is what MMCQ produced from the source frame (post-5-bit
+/// quantization average mapped back to 8-bit, so it round-trips to the
+/// nearest bin-center step). `color` is the closest xkcd entry to that
+/// RGB — its `rgb()` will differ slightly because it's snapped to the
+/// named-color palette.
+///
+/// Use `rgb` for rendering swatches that match the source frame; use
+/// `color.name()` / `.common_name()` / `.family()` etc. for search-
+/// index vocabulary. `population` is the relative weight, useful for
+/// ranking, merging across frames, or thresholding visual significance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dominant {
+  /// MMCQ-extracted dominant RGB.
+  pub rgb: [u8; 3],
+  /// Closest entry in the xkcd hierarchy to `rgb`, by Delta E 76 in
+  /// LAB space.
+  pub color: &'static Color,
+  /// Number of source-frame pixels assigned to this dominant's box.
+  pub population: u32,
+}
 
 /// Errors returned by [`RgbFrame::try_new`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
@@ -181,20 +208,26 @@ impl<'a> RgbFrame<'a> {
 }
 
 /// Extract up to `count` dominant colors from `frame`, each mapped to
-/// its nearest entry in the xkcd color hierarchy.
+/// its nearest entry in the xkcd color hierarchy and weighted by the
+/// number of source pixels behind it.
 ///
 /// Returns fewer than `count` entries if the frame has fewer distinct
 /// colors than requested. Returns an empty `Vec` when `count == 0`.
+/// The returned `Vec` is sorted descending by `population` so
+/// `extract(...)[0]` is always the most-dominant color.
 ///
 /// `count` is clamped to `[2, 256]` internally — MMCQ is undefined
 /// outside that range.
-pub fn extract(frame: &RgbFrame<'_>, count: u8) -> Vec<&'static Color> {
+pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
   if count == 0 {
     return Vec::new();
   }
-  let dominants = mmcq::quantize(frame, count);
-  dominants
+  mmcq::quantize(frame, count)
     .into_iter()
-    .map(|d| Color::nearest_to(d.rgb))
+    .map(|d| Dominant {
+      rgb: d.rgb,
+      color: Color::nearest_to(d.rgb),
+      population: d.population,
+    })
     .collect()
 }

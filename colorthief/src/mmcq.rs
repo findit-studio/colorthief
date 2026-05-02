@@ -27,12 +27,11 @@ const HISTO_SIZE: usize = 1 << (3 * SIGBITS); // 32768
 const MAX_ITERATIONS: usize = 1000;
 const FRACT_BY_POPULATIONS: f64 = 0.75;
 
-/// One dominant returned by [`quantize`]. `population` is the number of
-/// source pixels assigned to this box (useful for dominance ranking
-/// downstream; not currently surfaced through the public API).
+/// One dominant returned by [`quantize`]. `population` is the number
+/// of source pixels assigned to this box; the public `extract` wraps
+/// this into [`crate::Dominant`] alongside the named [`Color`] match.
 pub(crate) struct Dominant {
   pub rgb: [u8; 3],
-  #[allow(dead_code)]
   pub population: u32,
 }
 
@@ -135,7 +134,7 @@ impl VBox {
 }
 
 /// Build the 32K-entry histogram from a frame's pixels.
-fn build_histogram(frame: &RgbFrame<'_>) -> Vec<u32> {
+fn build_histogram(frame: RgbFrame<'_>) -> Vec<u32> {
   let mut histo = vec![0u32; HISTO_SIZE];
   for [r, g, b] in frame.pixels() {
     let rv = (r as u32) >> RSHIFT;
@@ -386,7 +385,7 @@ where
 }
 
 /// Run MMCQ on `frame` and return up to `max_colors` dominants.
-pub(crate) fn quantize(frame: &RgbFrame<'_>, max_colors: u8) -> Vec<Dominant> {
+pub(crate) fn quantize(frame: RgbFrame<'_>, max_colors: u8) -> Vec<Dominant> {
   // MMCQ is undefined outside [2, 256]. Saturate to that range.
   let target = (max_colors as usize).clamp(2, 256);
 
@@ -447,7 +446,7 @@ mod tests {
     let pixels = vec![[255, 0, 0]; 16];
     let buf = make_frame(4, 4, &pixels);
     let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-    let dominants = quantize(&frame, 5);
+    let dominants = quantize(frame, 5);
     assert!(!dominants.is_empty(), "MMCQ produced zero dominants");
     let top = &dominants[0];
     // The 5-bit quantization shifts pure red (255,0,0) → (31,0,0), and
@@ -469,7 +468,7 @@ mod tests {
     }
     let buf = make_frame(4, 4, &pixels);
     let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-    let dominants = quantize(&frame, 5);
+    let dominants = quantize(frame, 5);
     assert!(
       dominants.len() >= 2,
       "expected at least 2 dominants, got {}",
@@ -495,7 +494,7 @@ mod tests {
     // Row 1: red, red, then 2 bytes of garbage.
     buf.extend_from_slice(&[255, 0, 0, 255, 0, 0, 0xFF, 0xFF]);
     let frame = RgbFrame::try_new(&buf, 2, 2, 8).expect("frame with padding");
-    let dominants = quantize(&frame, 5);
+    let dominants = quantize(frame, 5);
     let top = &dominants[0];
     // If padding leaked in, we'd see white-ish (255,255,255) dominate.
     // The stride-respecting path keeps it red.

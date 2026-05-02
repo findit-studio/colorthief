@@ -7,41 +7,37 @@
 //!
 //! Run with: `cargo xtask codegen`.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+  collections::{BTreeMap, HashSet},
+  path::PathBuf,
+};
 
-use heck::ToShoutySnakeCase;
+use heck::{ToShoutySnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use serde::Deserialize;
 
-/// One row of `color_hierarchy.csv`. The `*_hex` columns are present in
-/// the CSV but unused — we keep them in the struct so serde rejects rows
-/// with the wrong column count instead of silently dropping data.
+/// One row of `color_hierarchy.csv`. Every column from the upstream
+/// dataset is captured and emitted into `generated.rs` — the runtime
+/// `Color` exposes all 18 of them so consumers can pick the level of
+/// granularity (xkcd / design / common name + hex + rgb) that fits
+/// their use case.
 #[derive(Debug, Deserialize)]
 struct CsvRow {
   xkcd_color: String,
-  #[allow(dead_code)]
   xkcd_color_hex: String,
   xkcd_r: u8,
   xkcd_g: u8,
   xkcd_b: u8,
   design_color: String,
-  #[allow(dead_code)]
   design_color_hex: String,
-  #[allow(dead_code)]
   design_r: u8,
-  #[allow(dead_code)]
   design_g: u8,
-  #[allow(dead_code)]
   design_b: u8,
   common_color: String,
-  #[allow(dead_code)]
   common_color_hex: String,
-  #[allow(dead_code)]
   common_r: u8,
-  #[allow(dead_code)]
   common_g: u8,
-  #[allow(dead_code)]
   common_b: u8,
   color_family: String,
   color_type: String,
@@ -83,7 +79,13 @@ fn codegen() {
     .collect();
   assert!(!rows.is_empty(), "CSV must have at least one entry");
 
-  // 2. Build per-entry tokens; track ident uniqueness as we go.
+  // 2a. Collect every distinct `color_family` and `color_type` value
+  // across the CSV — these become enum variants in `generated.rs`. Use
+  // `BTreeMap` for alphabetical, deterministic variant ordering.
+  let family_variants = collect_enum_variants(&rows, |r| &r.color_family, "color_family");
+  let kind_variants = collect_enum_variants(&rows, |r| &r.color_type, "color_type");
+
+  // 2b. Build per-entry tokens; track ident uniqueness as we go.
   let mut seen_idents = HashSet::<String>::new();
   let mut consts: Vec<TokenStream> = Vec::with_capacity(rows.len());
   let mut idents: Vec<syn::Ident> = Vec::with_capacity(rows.len());
@@ -99,27 +101,41 @@ fn codegen() {
     }
 
     let [r, g, b] = [row.xkcd_r, row.xkcd_g, row.xkcd_b];
+    let [dr, dg, db] = [row.design_r, row.design_g, row.design_b];
+    let [cr, cg, cb] = [row.common_r, row.common_g, row.common_b];
     let lab = rgb_to_lab([r, g, b]);
     let l_lit = float_lit(lab[0]);
     let a_lit = float_lit(lab[1]);
     let b_lit = float_lit(lab[2]);
 
     let xkcd_name = &row.xkcd_color;
+    let xkcd_hex = &row.xkcd_color_hex;
     let design_name = &row.design_color;
+    let design_hex = &row.design_color_hex;
     let common_name = &row.common_color;
-    let family = &row.color_family;
-    let kind = &row.color_type;
+    let common_hex = &row.common_color_hex;
+    let family_variant = family_variants
+      .get(&row.color_family)
+      .expect("collected from this row");
+    let kind_variant = kind_variants
+      .get(&row.color_type)
+      .expect("collected from this row");
     let is_neutral = parse_color_or_neutral(&row.color_or_neutral, xkcd_name);
 
     consts.push(quote! {
       const #ident: &Color = &Color {
         name: #xkcd_name,
+        hex: #xkcd_hex,
         rgb: [#r, #g, #b],
         lab: [#l_lit, #a_lit, #b_lit],
         design_name: #design_name,
+        design_hex: #design_hex,
+        design_rgb: [#dr, #dg, #db],
         common_name: #common_name,
-        family: #family,
-        kind: #kind,
+        common_hex: #common_hex,
+        common_rgb: [#cr, #cg, #cb],
+        family: Family::#family_variant,
+        kind: Kind::#kind_variant,
         is_neutral: #is_neutral,
       };
     });
@@ -129,8 +145,24 @@ fn codegen() {
   // 3. Assemble the file body and pretty-print.
   let count = idents.len();
   let count_doc = format!(" All {count} entries in the dataset, in CSV order.");
+  let family_enum = build_enum_tokens(
+    "Family",
+    &family_variants,
+    "Color family classification",
+    "color_family",
+  );
+  let kind_enum = build_enum_tokens(
+    "Kind",
+    &kind_variants,
+    "Color kind / texture classification",
+    "color_type",
+  );
   let body = quote! {
     use super::Color;
+
+    #family_enum
+
+    #kind_enum
 
     #(#consts)*
 
@@ -197,6 +229,123 @@ fn name_to_const_ident(name: &str) -> syn::Ident {
     cleaned
   };
   format_ident!("{}", cleaned)
+}
+
+/// Walk every CSV row, extract the chosen string column, and build a
+/// `value -> variant_ident` map. Panics on duplicate variant idents
+/// from distinct CSV values (which would mean the upstream dataset
+/// added a value that collides with an existing one after
+/// `to_upper_camel_case` — the right fix is to disambiguate the new
+/// value upstream or extend `enum_variant_ident`'s sanitisation).
+fn collect_enum_variants(
+  rows: &[CsvRow],
+  get: impl Fn(&CsvRow) -> &str,
+  column_label: &str,
+) -> BTreeMap<String, syn::Ident> {
+  let mut by_value: BTreeMap<String, syn::Ident> = BTreeMap::new();
+  for row in rows {
+    let value = get(row).trim().to_string();
+    if value.is_empty() {
+      panic!(
+        "row {:?}: column `{column_label}` is empty; every entry must \
+         have a non-empty {column_label} so the enum is exhaustive",
+        row.xkcd_color,
+      );
+    }
+    let ident = enum_variant_ident(&value);
+    if let Some(existing) = by_value.get(&value) {
+      // Same value, same ident — already recorded, skip.
+      debug_assert_eq!(existing, &ident);
+      continue;
+    }
+    if let Some((other_value, _)) = by_value.iter().find(|(_, v)| **v == ident) {
+      panic!(
+        "{column_label}: variant `{ident}` collision between \
+         {other_value:?} and {value:?}; adjust enum_variant_ident to \
+         disambiguate (the two CSV values would generate the same Rust \
+         identifier).",
+      );
+    }
+    by_value.insert(value, ident);
+  }
+  by_value
+}
+
+/// Convert a CSV value (lowercase, possibly multi-word) into a Rust
+/// `UpperCamelCase` enum variant ident.
+fn enum_variant_ident(value: &str) -> syn::Ident {
+  let camel = value.to_upper_camel_case();
+  // Defensive sanitisation — heck handles spaces and hyphens, but slip
+  // past anything else so we get a panic from `format_ident!` rather
+  // than a confusing emit-time error.
+  let cleaned: String = camel
+    .chars()
+    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+    .collect();
+  let cleaned = if cleaned
+    .chars()
+    .next()
+    .map(|c| c.is_ascii_digit())
+    .unwrap_or(false)
+  {
+    format!("V_{cleaned}")
+  } else {
+    cleaned
+  };
+  format_ident!("{}", cleaned)
+}
+
+/// Build a single `pub enum NAME { ... }` + its `as_str()` impl.
+fn build_enum_tokens(
+  type_name: &str,
+  values: &BTreeMap<String, syn::Ident>,
+  doc_summary: &str,
+  csv_column: &str,
+) -> TokenStream {
+  let type_ident = format_ident!("{}", type_name);
+  let type_doc = format!(
+    " {doc_summary} sourced from the upstream `color_hierarchy.csv` \n\
+     `{csv_column}` column. Marked `#[non_exhaustive]` so adding a \n\
+     new upstream value is a non-breaking change for downstream \n\
+     consumers; call [`{type_name}::as_str`] to get the original \n\
+     string back when you need to feed it into a search index."
+  );
+  let as_str_doc = format!(
+    " The original `{csv_column}` string for this variant — exactly \
+     what appears in `color_hierarchy.csv`."
+  );
+
+  let variants = values.iter().map(|(value, ident)| {
+    let variant_doc = format!(" Variant for `{value}`.");
+    quote! {
+      #[doc = #variant_doc]
+      #ident,
+    }
+  });
+  let arms = values.iter().map(|(value, ident)| {
+    quote! {
+      Self::#ident => #value,
+    }
+  });
+
+  quote! {
+    #[doc = #type_doc]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    #[non_exhaustive]
+    pub enum #type_ident {
+      #(#variants)*
+    }
+
+    impl #type_ident {
+      #[doc = #as_str_doc]
+      #[cfg_attr(not(tarpaulin), inline(always))]
+      pub const fn as_str(&self) -> &'static str {
+        match self {
+          #(#arms)*
+        }
+      }
+    }
+  }
 }
 
 fn parse_color_or_neutral(value: &str, name: &str) -> bool {
