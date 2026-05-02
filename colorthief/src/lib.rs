@@ -221,18 +221,27 @@ impl<'a> RgbFrame<'a> {
 /// The returned `Vec` is sorted descending by `population` so
 /// `extract(...)[0]` is always the most-dominant color.
 ///
-/// `count` is clamped to `[2, 256]` internally — MMCQ is undefined
-/// outside that range.
+/// MMCQ's internal `target` is clamped to `[2, 256]` (the algorithm
+/// is undefined outside that range), but the public `count` is
+/// honoured as a strict upper bound — the result is truncated to
+/// `count` so `extract(frame, 1)` returns at most one entry.
 pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
   if count == 0 {
     return Vec::new();
   }
-  mmcq::quantize(frame, count)
+  let mut dominants: Vec<Dominant> = mmcq::quantize(frame, count)
     .into_iter()
     .map(|d| Dominant {
       rgb: d.rgb,
       color: Color::nearest_to(d.rgb),
       population: d.population,
     })
-    .collect()
+    .collect();
+  // MMCQ runs with an internal target of `max(count, 2)` — clamping
+  // up keeps the algorithm well-defined. Truncate the (already
+  // population-descending) output back to the public `count` cap so
+  // callers using `count` as a hard top-N bound never see overrun.
+  // (Codex adversarial review, 2026-05-02.)
+  dominants.truncate(count as usize);
+  dominants
 }

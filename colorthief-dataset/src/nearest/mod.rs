@@ -151,6 +151,15 @@ mod tests {
 
   /// Iterate the standard parity grid (17³ = 4913 RGB points evenly
   /// spaced 16 apart). Reused across every backend's parity test.
+  ///
+  /// Gated on `feature = "std"` to match the parity tests below — they
+  /// all need `Vec` to collect mismatches, which requires `alloc` (and
+  /// the test harness itself needs std). On `cargo hack test
+  /// --no-default-features --features alloc` no SIMD-arch test is
+  /// reachable on Linux/Windows runners (target_arch = x86_64 with
+  /// `feature = "std"` filter excludes them), so this helper would
+  /// otherwise become dead code under `-Dwarnings`.
+  #[cfg(feature = "std")]
   fn parity_grid() -> impl Iterator<Item = [u8; 3]> {
     (0..256u32).step_by(16).flat_map(move |r| {
       (0..256u32).step_by(16).flat_map(move |g| {
@@ -177,9 +186,11 @@ mod tests {
     }
   }
 
-  /// aarch64 NEON ↔ scalar.
+  /// aarch64 NEON ↔ scalar. Needs `feature = "std"` for `Vec` and
+  /// the test harness; under `--no-default-features --features alloc`
+  /// the test is skipped (the standard test runner requires std).
   #[test]
-  #[cfg(target_arch = "aarch64")]
+  #[cfg(all(target_arch = "aarch64", feature = "std"))]
   fn neon_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
     for rgb in parity_grid() {
@@ -253,7 +264,7 @@ mod tests {
 
   /// WASM SIMD128 ↔ scalar.
   #[test]
-  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", feature = "std"))]
   fn wasm_simd128_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
     for rgb in parity_grid() {

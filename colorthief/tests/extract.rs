@@ -121,3 +121,64 @@ fn extract_dominants_sorted_by_population_descending() {
     top.color.name()
   );
 }
+
+/// Regression for Codex adversarial review finding [medium]:
+/// `extract(frame, 1)` was returning two entries because MMCQ's
+/// internal `target` clamps to ≥2. The public `count` must be a
+/// hard upper bound.
+#[test]
+fn extract_count_one_returns_at_most_one() {
+  // 4x4 half-red / half-blue — at least 2 distinct populated bins,
+  // so prior to the fix MMCQ would emit 2 dominants.
+  let mut buf = Vec::with_capacity(16 * 3);
+  for i in 0..16 {
+    let rgb = if i < 8 { [255, 0, 0] } else { [0, 0, 255] };
+    buf.extend_from_slice(&rgb);
+  }
+  let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
+  let dominants = extract(frame, 1);
+  assert!(
+    dominants.len() <= 1,
+    "extract(_, 1) must return at most 1 entry, got {}: {:?}",
+    dominants.len(),
+    dominants.iter().map(|d| d.rgb).collect::<Vec<_>>(),
+  );
+}
+
+/// Regression for Codex adversarial review finding [high]:
+/// `median_cut` could produce a (populated, empty) split that
+/// `iterate_split` accepted, and `quantize` then mapped the empty
+/// box's geometric-center fallback to a fabricated `Dominant`. With
+/// fewer distinct colors than `count`, the result must contain only
+/// real (population > 0) entries.
+#[test]
+fn extract_no_zero_population_dominants_below_distinct_color_floor() {
+  // 8x8 frame with only 2 populated bins (pure red, pure blue).
+  // Request 5 dominants — MMCQ will fail to split productively
+  // beyond 2 boxes; pre-fix, the surplus 3 boxes were zero-population
+  // entries with fabricated geometric-center colors.
+  let mut buf = Vec::with_capacity(64 * 3);
+  for i in 0..64 {
+    let rgb = if i < 32 { [255, 0, 0] } else { [0, 0, 255] };
+    buf.extend_from_slice(&rgb);
+  }
+  let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+  let dominants = extract(frame, 5);
+  assert!(
+    dominants.len() <= 2,
+    "frame has 2 distinct colors but extract returned {} dominants: {:?}",
+    dominants.len(),
+    dominants
+      .iter()
+      .map(|d| (d.rgb, d.population))
+      .collect::<Vec<_>>(),
+  );
+  for d in &dominants {
+    assert!(
+      d.population > 0,
+      "zero-population dominant in result: rgb={:?} name={:?}",
+      d.rgb,
+      d.color.name(),
+    );
+  }
+}

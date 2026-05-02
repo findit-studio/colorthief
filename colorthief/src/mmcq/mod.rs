@@ -423,13 +423,24 @@ pub(crate) fn quantize(frame: RgbFrame<'_>, max_colors: u8) -> Vec<Dominant> {
     core::cmp::Reverse(probe.count(&histo))
   });
 
+  // Filter zero-population boxes. `median_cut` can split a sparsely-
+  // populated parent into a (populated, empty) pair when the cut
+  // axis only has one occupied slice, and `iterate_split` accepts
+  // both halves. Without this filter the empty box's `avg()` would
+  // fall through to the geometric-center fallback, fabricating a
+  // dominant color that never appeared in the frame. (Codex
+  // adversarial review, 2026-05-02.)
   boxes
     .into_iter()
-    .map(|mut b| {
+    .filter_map(|mut b| {
       let pop = b.count(&histo);
-      Dominant {
-        rgb: b.avg(&histo),
-        population: pop,
+      if pop == 0 {
+        None
+      } else {
+        Some(Dominant {
+          rgb: b.avg(&histo),
+          population: pop,
+        })
       }
     })
     .collect()

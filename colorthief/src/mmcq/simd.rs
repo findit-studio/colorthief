@@ -79,20 +79,18 @@ pub(crate) mod scalar {
   }
 }
 
+// `dead_code` allow: under `--cfg colorthief_force_scalar` (the
+// coverage-side flag in `coverage.yml` and the `test-force-scalar`
+// job in `simd.yml`) the dispatcher short-circuits straight to the
+// scalar path, so this module's functions become dead. On
+// natural-build aarch64 every CI runner exercises them via the
+// standard test job. Same allow-pattern that
+// `colorthief-dataset/src/nearest/scalar.rs` uses for the inverse
+// case (scalar dead under natural-build aarch64). Outer attribute
+// (not inner) to satisfy clippy's `mixed_attributes_style` lint.
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, dead_code)]
 pub(crate) mod aarch64_neon {
-  // The dispatcher in `super::sum_u32_slice` only routes here when
-  // `not(colorthief_force_scalar)`. Under `--cfg colorthief_force_scalar`
-  // (the coverage-side flag in `coverage.yml` and the
-  // `test-force-scalar` job in `simd.yml`) the dispatcher short-circuits
-  // straight to the scalar path, so this module's functions become
-  // dead — but on natural-build aarch64 every CI runner exercises them
-  // via the standard test job. Same allow-pattern that
-  // `colorthief-dataset/src/nearest/scalar.rs` uses for the inverse
-  // case.
-  #![allow(dead_code)]
-
   use core::arch::aarch64::*;
 
   /// NEON saturating sum. Accumulates u32×4 lanes pairwise into a
@@ -129,10 +127,8 @@ pub(crate) mod aarch64_neon {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, dead_code)]
 pub(crate) mod x86_sse41 {
-  #![allow(dead_code)]
-
   use core::arch::x86_64::*;
 
   /// SSE4.1 saturating sum. 4 u32 lanes per iteration, widened to
@@ -172,10 +168,8 @@ pub(crate) mod x86_sse41 {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, dead_code)]
 pub(crate) mod x86_avx2 {
-  #![allow(dead_code)]
-
   use core::arch::x86_64::*;
 
   /// AVX2 saturating sum. 8 u32 lanes per iteration; each iteration
@@ -215,10 +209,8 @@ pub(crate) mod x86_avx2 {
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, dead_code)]
 pub(crate) mod wasm_simd128 {
-  #![allow(dead_code)]
-
   use core::arch::wasm32::*;
 
   /// WASM SIMD128 saturating sum. Same shape as SSE4.1 — 4 u32 lanes
