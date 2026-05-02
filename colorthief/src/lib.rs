@@ -39,7 +39,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-pub use colorthief_dataset::Color;
+pub use colorthief_dataset::{Color, Family, Kind};
 
 mod mmcq;
 

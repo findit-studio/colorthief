@@ -8,6 +8,7 @@ consumers; call [`Family::as_str`] to get the original
 string back when you need to feed it into a search index.*/
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
+#[repr(u8)]
 pub enum Family {
   /// Variant for `black`.
   Black,
@@ -103,6 +104,7 @@ consumers; call [`Kind::as_str`] to get the original
 string back when you need to feed it into a search index.*/
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
+#[repr(u8)]
 pub enum Kind {
   /// Variant for `dark color`.
   DarkColor,

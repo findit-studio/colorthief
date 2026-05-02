@@ -328,10 +328,23 @@ fn build_enum_tokens(
     }
   });
 
+  // Variant counts in this dataset are 26 (Family) and 11 (Kind) — both
+  // well under 256, so `#[repr(u8)]` is safely future-proof and gives
+  // every enum value a predictable 1-byte layout. If upstream ever
+  // grows past 256 variants the codegen will emit invalid tokens and
+  // the next `cargo build` will fail loudly, which is what we want.
+  let variant_count = values.len();
+  assert!(
+    variant_count <= 256,
+    "{type_name}: {variant_count} unique values exceeds u8 repr capacity; \
+     widen the repr or split into multiple enums",
+  );
+
   quote! {
     #[doc = #type_doc]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
     #[non_exhaustive]
+    #[repr(u8)]
     pub enum #type_ident {
       #(#variants)*
     }
