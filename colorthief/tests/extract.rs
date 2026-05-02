@@ -145,7 +145,62 @@ fn extract_count_one_returns_at_most_one() {
   );
 }
 
-/// Regression for Codex adversarial review finding [high]:
+/// Regression for Codex adversarial-review round 2 finding [high]:
+/// `iterate_split` was counting empty children of a sparse box's
+/// median-cut split toward `target`, so when the frame had `count`
+/// distinct colors but one of them sat in a wide-empty-range parent,
+/// the loop would terminate with an empty half consuming a target
+/// slot. The post-quantize zero-population filter then dropped that
+/// empty box, and `extract` underfilled (returned `< count` even
+/// though `count` real distinct colors were available).
+///
+/// Construct a frame with 5 distinct quantized colors arranged so
+/// one of them is widely separated on the R axis from the others —
+/// MMCQ's first split on R will produce a populated/empty pair for
+/// the high-R color's parent.
+#[test]
+fn extract_with_count_distinct_colors_returns_full_count() {
+  // Five distinct colors; the last one sits at R=255 while the rest
+  // cluster near R=0..32, so the first R-axis split has a wide
+  // empty range on the right of the populated low-R cluster.
+  let palette: [[u8; 3]; 5] = [
+    [10, 200, 10],  // green-ish, low R
+    [10, 10, 200],  // blue-ish, low R
+    [200, 10, 200], // magenta-ish, mid R
+    [10, 200, 200], // cyan-ish, low R
+    [255, 10, 10],  // red, high R — the sparse one
+  ];
+  // 8x8 frame, equal-area distribution of the 5 colors (with 4
+  // remainder pixels reused on the first color so totals are
+  // balanced enough that all five survive Phase 1's count-only
+  // priority).
+  let mut buf = Vec::with_capacity(64 * 3);
+  for i in 0..64 {
+    let rgb = palette[i % 5];
+    buf.extend_from_slice(&rgb);
+  }
+  let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+  let dominants = extract(frame, 5);
+  assert_eq!(
+    dominants.len(),
+    5,
+    "5 distinct colors but extract returned {} dominants: {:?}",
+    dominants.len(),
+    dominants
+      .iter()
+      .map(|d| (d.rgb, d.population))
+      .collect::<Vec<_>>(),
+  );
+  for d in &dominants {
+    assert!(
+      d.population > 0,
+      "zero-population dominant: rgb={:?}",
+      d.rgb
+    );
+  }
+}
+
+/// Regression for Codex adversarial review finding [high] (round 1):
 /// `median_cut` could produce a (populated, empty) split that
 /// `iterate_split` accepted, and `quantize` then mapped the empty
 /// box's geometric-center fallback to a fabricated `Dominant`. With

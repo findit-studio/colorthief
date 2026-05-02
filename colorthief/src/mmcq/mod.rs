@@ -356,12 +356,29 @@ fn median_cut(vbox: &VBox, histo: &[u32]) -> Option<(VBox, Option<VBox>)> {
 
 /// Iterative splitting against a `score(box) -> u64` ordering. Each
 /// iteration sorts ascending and splits the highest-score box.
+///
+/// Empty children are dropped at the source rather than counted toward
+/// `target`. Without this, `median_cut` can produce a `(populated,
+/// empty)` pair for a sparse parent box (one populated bin inside a
+/// wide range on one axis), the loop would terminate at `boxes.len()
+/// == target` with the empty half consuming a slot, and lower-scored
+/// splittable boxes would never get popped — the caller's
+/// `quantize` filter then drops the empty box and `extract`
+/// underfills relative to `count`. Codex adversarial-review round 2,
+/// 2026-05-02.
+///
+/// Boxes that can't be split further (single-bin, or median-cut
+/// returns `Some((_, None))`) are moved to a side `exhausted` pile so
+/// they don't get popped again, but the loop keeps trying lower-
+/// scored boxes — they may still be productively splittable.
 fn iterate_split<F>(boxes: &mut Vec<VBox>, target: usize, histo: &[u32], score: F)
 where
   F: Fn(&mut VBox, &[u32]) -> u64,
 {
   let mut iters = 0;
-  while boxes.len() < target && iters < MAX_ITERATIONS {
+  let mut exhausted: Vec<VBox> = Vec::new();
+
+  while boxes.len() + exhausted.len() < target && iters < MAX_ITERATIONS {
     iters += 1;
     boxes.sort_by_key(|b| {
       // sort_by_key needs a fresh `b` each call; clone is cheap (no
@@ -374,24 +391,47 @@ where
       None => break,
     };
     if top.count(histo) == 0 {
-      // No populated boxes left.
-      boxes.push(top);
+      // No populated boxes left in the splittable pile.
       break;
     }
     match median_cut(&top, histo) {
-      Some((left, Some(right))) => {
-        boxes.push(left);
-        boxes.push(right);
+      Some((mut left, Some(mut right))) => {
+        let l_pop = left.count(histo);
+        let r_pop = right.count(histo);
+        match (l_pop, r_pop) {
+          // `top` was non-empty above so this should be unreachable;
+          // defensive: keep `top` as exhausted rather than fabricating
+          // empty children.
+          (0, 0) => exhausted.push(top),
+          // `(populated, empty)` or `(empty, populated)` — push only
+          // the populated child. Net: the queue shrinks by one
+          // splittable candidate but `boxes.len() + exhausted.len()`
+          // doesn't grow toward `target`, so the loop continues with
+          // the next-highest box.
+          (0, _) => boxes.push(right),
+          (_, 0) => boxes.push(left),
+          (_, _) => {
+            boxes.push(left);
+            boxes.push(right);
+          }
+        }
       }
       Some((only, None)) => {
-        // Box can't split further; keep it and stop iterating
-        // (no other box is bigger by the current ordering).
-        boxes.push(only);
-        break;
+        // Unsplittable (single-bin or median-cut found no productive
+        // split). Set aside so we don't pop it again, but don't break
+        // — lower-scored boxes might still split.
+        exhausted.push(only);
       }
-      None => break,
+      None => {
+        // `top.count() > 0` was just verified, so median_cut returning
+        // `None` is unreachable in practice. Defensive: mark exhausted.
+        exhausted.push(top);
+      }
     }
   }
+
+  // Re-merge so `quantize` sees the full set (splittable + exhausted).
+  boxes.extend(exhausted);
 }
 
 /// Run MMCQ on `frame` and return up to `max_colors` dominants.
