@@ -1,9 +1,11 @@
 [workspace]
 members = [
   "colorthief",
+  "colorthief-dataset",
 ]
 default-members = [
   "colorthief",
+  "colorthief-dataset",
 ]
 resolver = "3"
 
@@ -14,6 +16,8 @@ homepage = "https://github.com/findit-ai/colorthief"
 
 [workspace.dependencies]
 thiserror = { version = "2", default-features = false }
+
+colorthief-dataset = { version = "0.0.0", path = "colorthief-dataset", default-features = false }
 
 [profile.bench]
 opt-level = 3
