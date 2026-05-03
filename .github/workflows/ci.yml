@@ -126,7 +126,7 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Run build
-      run: cargo hack build --feature-powerset --exclude-no-default-features
+      run: cargo hack build --each-feature
 
   test:
     name: test
@@ -155,7 +155,14 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Run test
-      run: cargo hack test --feature-powerset --exclude-no-default-features --exclude-features loom
+      # `--features std` forces every feature combo to include `std`.
+      # The Rust test harness fundamentally requires `std` (the `#[test]`
+      # attribute generates code that links against
+      # `std::process::Termination`), so combos without `std` fail at
+      # link time. The `cargo hack build` job above still exercises every
+      # `--each-feature` combo — including no-std combos — so
+      # compile-only coverage isn't lost.
+      run: cargo hack test --each-feature --features std
 
   sanitizer:
     name: sanitizer

@@ -177,11 +177,7 @@ impl VBox {
   /// bin's lower edge) instead of the centered formula. That biased
   /// every solid-color or low-variance frame down by `2^(RSHIFT - 1)`
   /// units — pure white mapped to `[248, 248, 248]` instead of
-  /// `[252, 252, 252]`. Codex adversarial-review round 4 flagged this
-  /// as a contract violation; we now route the single-bin case
-  /// through the general loop, which evaluates to the same centered
-  /// formula (the loop iterates exactly one bin and gives
-  /// `(idx + 0.5) * mult`).
+  /// `[252, 252, 252]`.
   fn avg(&mut self, histo: &[u32]) -> [u8; 3] {
     if let Some(a) = self.avg_cache {
       return a;
@@ -456,8 +452,7 @@ fn median_cut(vbox: &VBox, histo: &[u32]) -> Option<(VBox, Option<VBox>)> {
 /// == target` with the empty half consuming a slot, and lower-scored
 /// splittable boxes would never get popped — the caller's
 /// `quantize` filter then drops the empty box and `extract`
-/// underfills relative to `count`. Codex adversarial-review round 2,
-/// 2026-05-02.
+/// underfills relative to `count`.
 ///
 /// Boxes that can't be split further (single-bin, or median-cut
 /// returns `Some((_, None))`) are moved to a side `exhausted` pile so
@@ -602,7 +597,8 @@ impl Mmcq {
   /// and zero-fills directly on the heap; `assume_init` is a bit-level
   /// cast with no copy.
   #[cfg(feature = "alloc")]
-  pub fn new_boxed() -> alloc::boxed::Box<Self> {
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  pub fn new_boxed() -> std::boxed::Box<Self> {
     // SAFETY: every field of `Mmcq` has a valid all-zero bit-pattern:
     //
     //   - histogram: `[u32; HISTO_SIZE]`, zero is valid u32
@@ -610,7 +606,7 @@ impl Mmcq {
     //     `MaybeUninit` accepts any pattern, `len = 0` is valid.
     #[allow(unsafe_code)]
     unsafe {
-      alloc::boxed::Box::<Self>::new_zeroed().assume_init()
+      std::boxed::Box::<Self>::new_zeroed().assume_init()
     }
   }
 
@@ -721,7 +717,7 @@ impl Mmcq {
 // --- Tier 1: std (thread_local-cached) ------------------------------
 #[cfg(feature = "std")]
 std::thread_local! {
-  static MMCQ_TLS: core::cell::RefCell<alloc::boxed::Box<Mmcq>> =
+  static MMCQ_TLS: core::cell::RefCell<std::boxed::Box<Mmcq>> =
     core::cell::RefCell::new(Mmcq::new_boxed());
 }
 
@@ -733,10 +729,10 @@ pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
   pixels: I,
   count: u8,
   algo: crate::Algorithm,
-) -> alloc::vec::Vec<crate::Dominant> {
+) -> std::vec::Vec<crate::Dominant> {
   MMCQ_TLS.with(|cell| {
     let mut mmcq = cell.borrow_mut();
-    let mut out: alloc::vec::Vec<crate::Dominant> = alloc::vec::Vec::new();
+    let mut out: std::vec::Vec<crate::Dominant> = std::vec::Vec::new();
     mmcq.extract(pixels, count, algo, &mut out);
     out
   })
@@ -747,7 +743,7 @@ pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
 mod single_threaded_cache {
   use core::cell::{OnceCell, RefCell};
 
-  use alloc::boxed::Box;
+  use std::boxed::Box;
 
   use super::Mmcq;
 
@@ -772,12 +768,12 @@ pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
   pixels: I,
   count: u8,
   algo: crate::Algorithm,
-) -> alloc::vec::Vec<crate::Dominant> {
+) -> std::vec::Vec<crate::Dominant> {
   let cell = single_threaded_cache::MMCQ_CELL
     .0
     .get_or_init(|| core::cell::RefCell::new(Mmcq::new_boxed()));
   let mut mmcq = cell.borrow_mut();
-  let mut out: alloc::vec::Vec<crate::Dominant> = alloc::vec::Vec::new();
+  let mut out: std::vec::Vec<crate::Dominant> = std::vec::Vec::new();
   mmcq.extract(pixels, count, algo, &mut out);
   out
 }
@@ -792,9 +788,9 @@ pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
   pixels: I,
   count: u8,
   algo: crate::Algorithm,
-) -> alloc::vec::Vec<crate::Dominant> {
+) -> std::vec::Vec<crate::Dominant> {
   let mut mmcq = Mmcq::new_boxed();
-  let mut out: alloc::vec::Vec<crate::Dominant> = alloc::vec::Vec::new();
+  let mut out: std::vec::Vec<crate::Dominant> = std::vec::Vec::new();
   mmcq.extract(pixels, count, algo, &mut out);
   out
 }
@@ -831,7 +827,7 @@ mod tests {
     assert!(top.rgb[2] < 30, "expected B<30, got {:?}", top.rgb);
   }
 
-  /// Codex adversarial-review round 4: pre-fix, the single-bin
+  /// pre-fix, the single-bin
   /// shortcut in `avg()` returned `idx << RSHIFT` (the bin's lower
   /// edge), which biased every solid-color frame down by half a bin
   /// width. Pure white was reported as `[248, 248, 248]` instead of

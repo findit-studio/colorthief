@@ -248,8 +248,11 @@ pub(crate) fn nearest_cie94(query: [f32; 3]) -> &'static Color {
   }
 
   // Tier 1-3: x86_64 std runtime feature detection. AVX-512F → AVX2
-  // → SSE4.1, same cascade as Delta E 76's `nearest_idx`.
-  #[cfg(all(target_arch = "x86_64", not(colorthief_force_scalar)))]
+  // → SSE4.1, same cascade as Delta E 76's `nearest_idx`. Gated on
+  // `feature = "std"` because `is_x86_feature_detected!` requires
+  // `std`; on `no_std` x86_64 we fall through to scalar (matches the
+  // Delta E 76 cascade above at line 170).
+  #[cfg(all(target_arch = "x86_64", feature = "std", not(colorthief_force_scalar)))]
   {
     if !cfg!(colorthief_disable_avx512) && std::is_x86_feature_detected!("avx512f") {
       // SAFETY: feature just verified.

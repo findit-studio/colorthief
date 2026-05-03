@@ -124,7 +124,6 @@ fn extract_dominants_sorted_by_population_descending() {
   );
 }
 
-/// Regression for Codex adversarial review finding [medium]:
 /// `extract(frame, 1)` was returning two entries because MMCQ's
 /// internal `target` clamps to ≥2. The public `count` must be a
 /// hard upper bound.
@@ -147,7 +146,6 @@ fn extract_count_one_returns_at_most_one() {
   );
 }
 
-/// Regression for Codex adversarial-review round 5 finding [medium]:
 /// `phase1_target = (0.75 * count) as usize` truncated toward zero,
 /// so for `count` values with a fractional `0.75 * count` (3, 5, 6,
 /// 7, 9, …) phase 1 ended one box early vs. the TS reference's
@@ -205,7 +203,6 @@ fn extract_count_7_returns_full_count() {
   }
 }
 
-/// Regression for Codex adversarial-review round 2 finding [high]:
 /// `iterate_split` was counting empty children of a sparse box's
 /// median-cut split toward `target`, so when the frame had `count`
 /// distinct colors but one of them sat in a wide-empty-range parent,
@@ -260,7 +257,6 @@ fn extract_with_count_distinct_colors_returns_full_count() {
   }
 }
 
-/// Regression for Codex adversarial review finding [high] (round 1):
 /// `median_cut` could produce a (populated, empty) split that
 /// `iterate_split` accepted, and `quantize` then mapped the empty
 /// box's geometric-center fallback to a fabricated `Dominant`. With

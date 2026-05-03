@@ -1,40 +1,4 @@
-//! Dominant-color extraction (MMCQ) + human-vocabulary naming for packed
-//! sRGB video keyframes.
-//!
-//! # Pipeline
-//!
-//! 1. [`extract`] runs MMCQ (Modified Median Cut Quantization) over the
-//!    pixels of an [`RgbFrame`], producing up to `count` dominant RGB
-//!    values plus the pixel population behind each.
-//! 2. Each dominant is mapped to its nearest entry in
-//!    [`colorthief_dataset`]'s xkcd-hierarchy table via the algorithm
-//!    chosen by [`Algorithm`] (default: [`Algorithm::Ciede2000Exact`],
-//!    the modern perceptual gold-standard).
-//!
-//! The result is a `Vec<`[`Dominant`]`>` carrying both the actual
-//! extracted RGB (for swatch rendering) and the named [`Color`] (for
-//! search-vocabulary), sorted descending by `population`. The caller
-//! picks which name level (`name()`, `common_name()`, `family()`, …)
-//! is right for their indexing needs.
-//!
-//! # Frame input
-//!
-//! [`RgbFrame`] is a borrowed-byte-slice newtype shaped like
-//! `colconv::Rgb24Frame`: packed 8-bit RGB, one plane, `R, G, B` byte
-//! order, byte stride ≥ `3 * width`. **Not** a `colconv` re-export —
-//! that crate is GPL-3.0-or-later and we keep this workspace under
-//! MIT/Apache. Bridge from a real `colconv::Rgb24Frame` at the call
-//! site:
-//!
-//! ```ignore
-//! let frame = colorthief::RgbFrame::try_new(
-//!     rgb24.rgb(), rgb24.width(), rgb24.height(), rgb24.stride()
-//! )?;
-//! let colors = colorthief::extract(&frame, 5);
-//! ```
-//!
-//! [`colorthief_dataset`]: ../colorthief_dataset/index.html
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
@@ -47,11 +11,14 @@
 // scoped `#[allow(unsafe_code)]` for `Box::new_zeroed().assume_init()`.
 #![deny(unsafe_code)]
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+extern crate alloc as std;
 
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
+#[cfg(feature = "std")]
+extern crate std;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+use std::vec::Vec;
 
 pub use colorthief_dataset::{Algorithm, Color, Family, Kind};
 
@@ -375,7 +342,8 @@ impl<'a> Rgb48Frame<'a> {
 /// **Requires the `alloc` feature** — disabled in `no_std + no_alloc`
 /// builds. For those, use `Mmcq::extract` with a caller-supplied
 /// [`Buffer`] (once that lands in task #19).
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 #[inline]
 pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
   extract_with(frame, count, Algorithm::default())
@@ -387,7 +355,8 @@ pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
 ///
 /// The MMCQ extraction stage is identical regardless of `algo`; only
 /// the RGB → named-`Color` lookup differs.
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 pub fn extract_with(frame: RgbFrame<'_>, count: u8, algo: Algorithm) -> Vec<Dominant> {
   if count == 0 {
     return Vec::new();
@@ -400,14 +369,16 @@ pub fn extract_with(frame: RgbFrame<'_>, count: u8, algo: Algorithm) -> Vec<Domi
 /// channel is downscaled to u8 via `>> 8` at pixel iteration before
 /// MMCQ — see [`Rgb48Frame`] for the rationale and color-space
 /// caveat.
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 #[inline]
 pub fn extract_rgb48(frame: Rgb48Frame<'_>, count: u8) -> Vec<Dominant> {
   extract_rgb48_with(frame, count, Algorithm::default())
 }
 
 /// 16-bit variant of [`extract_with`].
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 pub fn extract_rgb48_with(frame: Rgb48Frame<'_>, count: u8, algo: Algorithm) -> Vec<Dominant> {
   if count == 0 {
     return Vec::new();
@@ -422,9 +393,9 @@ pub fn extract_rgb48_with(frame: Rgb48Frame<'_>, count: u8, algo: Algorithm) -> 
 /// MMCQ's internal `target` is clamped to `[2, 256]` (the algorithm
 /// is undefined outside that range), but the public `count` is the
 /// hard upper bound `Mmcq::extract` honours via the `Buffer::try_push`
-/// caller-side cap — `count = 1` returns at most 1 entry. Codex
-/// adversarial review, 2026-05-02.
-#[cfg(feature = "alloc")]
+/// caller-side cap — `count = 1` returns at most 1 entry.
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
 fn extract_dominants_from_pixels<I: Iterator<Item = [u8; 3]>>(
   pixels: I,
   count: u8,

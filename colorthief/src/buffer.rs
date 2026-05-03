@@ -42,13 +42,14 @@ pub trait Buffer<T> {
   fn try_push(&mut self, val: T) -> Option<T>;
 }
 
-#[cfg(feature = "alloc")]
-impl<T> Buffer<T> for alloc::vec::Vec<T> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+impl<T> Buffer<T> for std::vec::Vec<T> {
   const MAX_CAP: Option<usize> = None;
 
   #[inline]
   fn try_push(&mut self, val: T) -> Option<T> {
-    alloc::vec::Vec::push(self, val);
+    std::vec::Vec::push(self, val);
     None
   }
 }
@@ -116,10 +117,11 @@ mod tests {
     assert_eq!(underlying, [Some("a"), Some("b")]);
   }
 
-  #[cfg(feature = "alloc")]
+  #[cfg(any(feature = "alloc", feature = "std"))]
   #[test]
   fn vec_buffer_is_unbounded() {
-    use alloc::vec::Vec;
+    use std::vec::Vec;
+
     let mut buf: Vec<u32> = Vec::new();
     for i in 0..1000 {
       assert_eq!(buf.try_push(i), None);

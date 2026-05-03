@@ -51,7 +51,10 @@ pub(crate) fn sum_u32_slice(slice: &[u32]) -> u32 {
     return wasm_simd128::sum_u32_slice(slice);
   }
 
-  #[cfg(all(target_arch = "x86_64", not(colorthief_force_scalar)))]
+  // Gated on `feature = "std"` because `is_x86_feature_detected!`
+  // requires `std`. On `no_std + alloc` x86_64 we fall through to
+  // scalar — same convention as `colorthief-dataset/src/nearest/mod.rs`.
+  #[cfg(all(target_arch = "x86_64", feature = "std", not(colorthief_force_scalar)))]
   {
     if !cfg!(colorthief_disable_avx2) && std::is_x86_feature_detected!("avx2") {
       // SAFETY: feature just verified.
