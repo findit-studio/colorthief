@@ -61,6 +61,15 @@ pub mod __bench {
   };
 
   #[cfg(target_arch = "aarch64")]
+  pub use crate::nearest::cie94_aarch64_neon::nearest_idx as cie94_aarch64_neon_nearest_idx;
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  pub use crate::nearest::cie94_wasm_simd128::nearest_idx as cie94_wasm_simd128_nearest_idx;
+  #[cfg(target_arch = "x86_64")]
+  pub use crate::nearest::cie94_x86_avx2::nearest_idx as cie94_x86_avx2_nearest_idx;
+  #[cfg(target_arch = "x86_64")]
+  pub use crate::nearest::cie94_x86_sse41::nearest_idx as cie94_x86_sse41_nearest_idx;
+
+  #[cfg(target_arch = "aarch64")]
   pub use crate::nearest::aarch64_neon::nearest_idx as aarch64_neon_nearest_idx;
 
   // x86 backends are `unsafe fn` (the `#[target_feature]` attribute

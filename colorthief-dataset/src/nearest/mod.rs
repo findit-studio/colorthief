@@ -59,10 +59,22 @@ pub(crate) mod scalar;
 /// can't usefully parallelise, so we keep the scalar path.
 pub(crate) mod ciede2000;
 
-/// CIE94 (Delta E 94) — scalar implementation. SIMD-friendly (no
-/// `atan2`, `sin`, `cos`, `exp`); SIMD backends to be added in
-/// follow-up work.
+/// CIE94 (Delta E 94) — scalar reference. The SIMD-friendly formula
+/// (no `atan2` / `sin` / `cos` / `exp`; only `sqrt` + arithmetic) has
+/// per-arch backends below mirroring Delta E 76.
 pub(crate) mod cie94;
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) mod cie94_aarch64_neon;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod cie94_x86_sse41;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod cie94_x86_avx2;
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub(crate) mod cie94_wasm_simd128;
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64_neon;
@@ -182,12 +194,43 @@ pub(crate) fn nearest_ciede2000_prefiltered(query: [f32; 3]) -> &'static Color {
   COLORS[ciede2000::nearest_idx_prefiltered(query)]
 }
 
-/// CIE94 (Delta E 94) nearest-neighbor convenience wrapper used by
-/// [`crate::Color::nearest_to_cie94`]. Currently scalar-only; SIMD
-/// backends would mirror the Delta E 76 module structure since the
-/// formula has no transcendentals beyond `sqrt`.
+/// CIE94 (Delta E 94) nearest-neighbor with the same SIMD dispatch
+/// cascade as [`nearest_idx`] for Delta E 76. Honours the same
+/// coverage cfg flags (`colorthief_force_scalar`,
+/// `colorthief_disable_avx2`).
+#[allow(unsafe_code)]
+#[allow(unreachable_code)]
 #[inline]
 pub(crate) fn nearest_cie94(query: [f32; 3]) -> &'static Color {
+  // Tier 1: aarch64 NEON.
+  #[cfg(all(target_arch = "aarch64", not(colorthief_force_scalar)))]
+  {
+    return COLORS[cie94_aarch64_neon::nearest_idx(query)];
+  }
+
+  // Tier 1: WASM SIMD128 (compile-time gated).
+  #[cfg(all(
+    target_arch = "wasm32",
+    target_feature = "simd128",
+    not(colorthief_force_scalar)
+  ))]
+  {
+    return COLORS[cie94_wasm_simd128::nearest_idx(query)];
+  }
+
+  // Tier 1-2: x86_64 std runtime feature detection.
+  #[cfg(all(target_arch = "x86_64", not(colorthief_force_scalar)))]
+  {
+    if !cfg!(colorthief_disable_avx2) && std::is_x86_feature_detected!("avx2") {
+      // SAFETY: feature just verified.
+      return COLORS[unsafe { cie94_x86_avx2::nearest_idx(query) }];
+    }
+    if std::is_x86_feature_detected!("sse4.1") {
+      // SAFETY: feature just verified.
+      return COLORS[unsafe { cie94_x86_sse41::nearest_idx(query) }];
+    }
+  }
+
   COLORS[cie94::nearest_idx(query)]
 }
 
@@ -304,6 +347,100 @@ mod tests {
     assert!(
       mismatches.is_empty(),
       "{} scalar/AVX2 mismatches; first few: {:?}",
+      mismatches.len(),
+      &mismatches[..mismatches.len().min(5)]
+    );
+  }
+
+  /// CIE94 aarch64 NEON ↔ scalar.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", feature = "std"))]
+  fn cie94_neon_and_scalar_agree_across_grid() {
+    let mut mismatches = Vec::new();
+    for rgb in parity_grid() {
+      let query = crate::rgb_to_lab(rgb);
+      let s = cie94::nearest_idx(query);
+      let n = cie94_aarch64_neon::nearest_idx(query);
+      if s != n {
+        mismatches.push((rgb, s, n));
+      }
+    }
+    assert!(
+      mismatches.is_empty(),
+      "{} CIE94 scalar/NEON mismatches; first few: {:?}",
+      mismatches.len(),
+      &mismatches[..mismatches.len().min(5)]
+    );
+  }
+
+  /// CIE94 x86 SSE4.1 ↔ scalar.
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn cie94_sse41_and_scalar_agree_across_grid() {
+    if !std::is_x86_feature_detected!("sse4.1") {
+      eprintln!("skipping: SSE4.1 not detected");
+      return;
+    }
+    let mut mismatches = Vec::new();
+    for rgb in parity_grid() {
+      let query = crate::rgb_to_lab(rgb);
+      let s = cie94::nearest_idx(query);
+      // SAFETY: feature verified.
+      let v = unsafe { cie94_x86_sse41::nearest_idx(query) };
+      if s != v {
+        mismatches.push((rgb, s, v));
+      }
+    }
+    assert!(
+      mismatches.is_empty(),
+      "{} CIE94 scalar/SSE4.1 mismatches; first few: {:?}",
+      mismatches.len(),
+      &mismatches[..mismatches.len().min(5)]
+    );
+  }
+
+  /// CIE94 x86 AVX2 ↔ scalar.
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn cie94_avx2_and_scalar_agree_across_grid() {
+    if !std::is_x86_feature_detected!("avx2") {
+      eprintln!("skipping: AVX2 not detected");
+      return;
+    }
+    let mut mismatches = Vec::new();
+    for rgb in parity_grid() {
+      let query = crate::rgb_to_lab(rgb);
+      let s = cie94::nearest_idx(query);
+      // SAFETY: feature verified.
+      let v = unsafe { cie94_x86_avx2::nearest_idx(query) };
+      if s != v {
+        mismatches.push((rgb, s, v));
+      }
+    }
+    assert!(
+      mismatches.is_empty(),
+      "{} CIE94 scalar/AVX2 mismatches; first few: {:?}",
+      mismatches.len(),
+      &mismatches[..mismatches.len().min(5)]
+    );
+  }
+
+  /// CIE94 WASM SIMD128 ↔ scalar.
+  #[test]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", feature = "std"))]
+  fn cie94_wasm_simd128_and_scalar_agree_across_grid() {
+    let mut mismatches = Vec::new();
+    for rgb in parity_grid() {
+      let query = crate::rgb_to_lab(rgb);
+      let s = cie94::nearest_idx(query);
+      let v = cie94_wasm_simd128::nearest_idx(query);
+      if s != v {
+        mismatches.push((rgb, s, v));
+      }
+    }
+    assert!(
+      mismatches.is_empty(),
+      "{} CIE94 scalar/WASM SIMD128 mismatches; first few: {:?}",
       mismatches.len(),
       &mismatches[..mismatches.len().min(5)]
     );

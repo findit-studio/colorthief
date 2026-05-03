@@ -75,16 +75,57 @@ fn bench_nearest_idx(c: &mut Criterion) {
     })
   });
 
-  // CIE94 (Delta E 94) — the middle-ground perceptual metric. Like
-  // Delta E 76 it has no transcendentals beyond sqrt, so future SIMD
-  // backends would mirror the Delta E 76 layout. Bench expectation:
-  // ~2-3× slower than Delta E 76 scalar (extra sqrt for chroma plus
-  // the chroma-scaled denominators), much faster than CIEDE2000.
+  // CIE94 scalar reference.
   group.bench_function("cie94_scalar", |b| {
     let mut iter = queries.iter().cycle();
     b.iter(|| {
       let q = *iter.next().unwrap();
       black_box(__bench::cie94_nearest_idx(black_box(q)))
+    })
+  });
+
+  // CIE94 NEON.
+  #[cfg(target_arch = "aarch64")]
+  group.bench_function("cie94_aarch64_neon", |b| {
+    let mut iter = queries.iter().cycle();
+    b.iter(|| {
+      let q = *iter.next().unwrap();
+      black_box(__bench::cie94_aarch64_neon_nearest_idx(black_box(q)))
+    })
+  });
+
+  // CIE94 x86 SIMD — only bench what the host actually supports.
+  #[cfg(target_arch = "x86_64")]
+  {
+    if std::is_x86_feature_detected!("sse4.1") {
+      group.bench_function("cie94_x86_sse41", |b| {
+        let mut iter = queries.iter().cycle();
+        b.iter(|| {
+          let q = *iter.next().unwrap();
+          // SAFETY: feature verified.
+          black_box(unsafe { __bench::cie94_x86_sse41_nearest_idx(black_box(q)) })
+        })
+      });
+    }
+    if std::is_x86_feature_detected!("avx2") {
+      group.bench_function("cie94_x86_avx2", |b| {
+        let mut iter = queries.iter().cycle();
+        b.iter(|| {
+          let q = *iter.next().unwrap();
+          // SAFETY: feature verified.
+          black_box(unsafe { __bench::cie94_x86_avx2_nearest_idx(black_box(q)) })
+        })
+      });
+    }
+  }
+
+  // CIE94 WASM SIMD128.
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  group.bench_function("cie94_wasm_simd128", |b| {
+    let mut iter = queries.iter().cycle();
+    b.iter(|| {
+      let q = *iter.next().unwrap();
+      black_box(__bench::cie94_wasm_simd128_nearest_idx(black_box(q)))
     })
   });
 
