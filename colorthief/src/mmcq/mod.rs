@@ -699,15 +699,95 @@ impl Mmcq {
 
 // =====================================================================
 // alloc-tier convenience wrapper (used by lib.rs's `extract*`).
+//
+// Three impls of `quantize` are defined below, mutually-exclusive on
+// feature flags so callers always see one signature:
+//
+//   1. `feature = "std"`: thread_local!-cached `Box<Mmcq>` — one
+//      ~134 KB allocation per OS thread for the program's lifetime;
+//      zero per-call.
+//   2. `feature = "single-threaded"` (no_std + alloc): `OnceCell`-
+//      cached static `Box<Mmcq>` wrapped in an `AssumeSync` shim
+//      whose `unsafe impl Sync` is justified by the user opting in
+//      to the `single-threaded` feature flag (typical
+//      wasm32-unknown-unknown / interrupt-free bare metal). Zero
+//      per-call after first.
+//   3. `feature = "alloc"` (no std, no single-threaded): per-call
+//      `Mmcq::new_boxed()`. ~134 KB heap alloc per call. Acceptable
+//      when alloc is available but the threading model is unknown
+//      (RTOS multi-task, etc.) and the call rate is low.
 // =====================================================================
 
+// --- Tier 1: std (thread_local-cached) ------------------------------
+#[cfg(feature = "std")]
+std::thread_local! {
+  static MMCQ_TLS: core::cell::RefCell<alloc::boxed::Box<Mmcq>> =
+    core::cell::RefCell::new(Mmcq::new_boxed());
+}
+
 /// Run MMCQ on a pixel iterator and return up to `count` named
-/// dominants in a `Vec`. Allocates a `Box<Mmcq>` workspace on every
-/// call (~134 KB heap); for repeated calls in the same thread, prefer
-/// the thread-local-cached path in lib.rs once available.
-///
-/// Used by lib.rs's alloc-tier `extract*` helpers.
-#[cfg(feature = "alloc")]
+/// dominants in a `Vec`. See module-level comment above for the
+/// per-tier caching strategy.
+#[cfg(feature = "std")]
+pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
+  pixels: I,
+  count: u8,
+  algo: crate::Algorithm,
+) -> alloc::vec::Vec<crate::Dominant> {
+  MMCQ_TLS.with(|cell| {
+    let mut mmcq = cell.borrow_mut();
+    let mut out: alloc::vec::Vec<crate::Dominant> = alloc::vec::Vec::new();
+    mmcq.extract(pixels, count, algo, &mut out);
+    out
+  })
+}
+
+// --- Tier 2: single-threaded (no_std + alloc, OnceCell-cached) ------
+#[cfg(all(feature = "single-threaded", not(feature = "std")))]
+mod single_threaded_cache {
+  use core::cell::{OnceCell, RefCell};
+
+  use alloc::boxed::Box;
+
+  use super::Mmcq;
+
+  /// Wrapper that asserts `Sync` on its inner type. The
+  /// `single-threaded` feature flag is the user's promise that there
+  /// is no concurrent access (typical wasm32-unknown-unknown,
+  /// interrupt-free bare metal). Without this assertion the compiler
+  /// rejects `static MMCQ: OnceCell<RefCell<Box<Mmcq>>>` because
+  /// `RefCell` is `!Sync`.
+  pub(crate) struct AssumeSync<T>(pub OnceCell<T>);
+
+  // SAFETY: documented above; gated on the `single-threaded` feature
+  // flag, which is opt-in.
+  #[allow(unsafe_code)]
+  unsafe impl<T> Sync for AssumeSync<T> {}
+
+  pub(crate) static MMCQ_CELL: AssumeSync<RefCell<Box<Mmcq>>> = AssumeSync(OnceCell::new());
+}
+
+#[cfg(all(feature = "single-threaded", not(feature = "std")))]
+pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
+  pixels: I,
+  count: u8,
+  algo: crate::Algorithm,
+) -> alloc::vec::Vec<crate::Dominant> {
+  let cell = single_threaded_cache::MMCQ_CELL
+    .0
+    .get_or_init(|| core::cell::RefCell::new(Mmcq::new_boxed()));
+  let mut mmcq = cell.borrow_mut();
+  let mut out: alloc::vec::Vec<crate::Dominant> = alloc::vec::Vec::new();
+  mmcq.extract(pixels, count, algo, &mut out);
+  out
+}
+
+// --- Tier 3: alloc-only (per-call) ----------------------------------
+#[cfg(all(
+  feature = "alloc",
+  not(feature = "std"),
+  not(feature = "single-threaded")
+))]
 pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
   pixels: I,
   count: u8,
