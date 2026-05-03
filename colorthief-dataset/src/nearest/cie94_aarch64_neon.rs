@@ -30,10 +30,15 @@ unsafe fn nearest_idx_neon(query: [f32; 3]) -> usize {
   // chroma C₂ = sqrt(a₂² + b₂²) once outside the loop. Note that
   // unlike the entry C₁, C₂ doesn't drive any scale factor —
   // S_C / S_H use C₁ — so it only matters for the ΔC term.
+  //
+  // Plain mul + add (not FMA) to keep the result bit-identical to the
+  // scalar `a*a + b*b` — FMA produces a single-rounded result that
+  // diverges from the scalar reference at ~5 RGB inputs across the
+  // 256³ cube (caught by `tests/parity_exhaustive.rs`).
   let l2 = vdupq_n_f32(query[0]);
   let a2 = vdupq_n_f32(query[1]);
   let b2 = vdupq_n_f32(query[2]);
-  let c2_sq_v = vfmaq_f32(vmulq_f32(b2, b2), a2, a2);
+  let c2_sq_v = vaddq_f32(vmulq_f32(a2, a2), vmulq_f32(b2, b2));
   let c2_v = vsqrtq_f32(c2_sq_v);
 
   let n = LABS_L.len();
@@ -65,17 +70,19 @@ unsafe fn nearest_idx_neon(query: [f32; 3]) -> usize {
     let db = vsubq_f32(b1, b2);
 
     // ΔC = C₁ - C₂. ΔH² = max(Δa² + Δb² - ΔC², 0).
+    // Plain mul + add (no FMA) — see the c2_sq comment above.
     let dc = vsubq_f32(c1, c2_v);
-    let dab_sq = vfmaq_f32(vmulq_f32(db, db), da, da);
+    let dab_sq = vaddq_f32(vmulq_f32(da, da), vmulq_f32(db, db));
     let dc_sq = vmulq_f32(dc, dc);
     let dh_sq_raw = vsubq_f32(dab_sq, dc_sq);
     // Clamp ΔH² ≥ 0 to absorb f32 cancellation when (Δa² + Δb²) ≈ ΔC².
     let dh_sq = vmaxq_f32(dh_sq_raw, vdupq_n_f32(0.0));
 
     // S_C = 1 + 0.045·C₁; S_H = 1 + 0.015·C₁; S_L = 1.
+    // Plain mul + add (no FMA) for the same parity reason.
     let one = vdupq_n_f32(1.0);
-    let sc = vfmaq_f32(one, vdupq_n_f32(0.045), c1);
-    let sh = vfmaq_f32(one, vdupq_n_f32(0.015), c1);
+    let sc = vaddq_f32(one, vmulq_f32(vdupq_n_f32(0.045), c1));
+    let sh = vaddq_f32(one, vmulq_f32(vdupq_n_f32(0.015), c1));
 
     // Terms: dl_term² (sl=1 so just dl²), (dc/sc)², dh_sq/(sh²).
     let dl_sq = vmulq_f32(dl, dl);

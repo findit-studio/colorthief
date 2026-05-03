@@ -55,12 +55,12 @@ pub use generated::{COLORS, Family, Kind};
 #[doc(hidden)]
 pub mod __bench {
   pub use crate::nearest::{
-    cie94::nearest_idx as cie94_nearest_idx,
+    cie94::{delta_e_94_sq, nearest_idx as cie94_nearest_idx},
     ciede2000::{
-      nearest_idx as ciede2000_nearest_idx,
+      delta_e_2000_sq, nearest_idx as ciede2000_nearest_idx,
       nearest_idx_prefiltered as ciede2000_prefiltered_nearest_idx,
     },
-    scalar::nearest_idx as scalar_nearest_idx,
+    scalar::{delta_e_76_sq, nearest_idx as scalar_nearest_idx},
   };
 
   #[cfg(target_arch = "aarch64")]

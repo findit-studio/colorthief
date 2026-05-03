@@ -29,6 +29,9 @@ libm = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
+# Property-based tests live in `tests/properties.rs`; we only need the
+# minimum runtime surface (`std`), no fork/timeout/bit-set extras.
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "nearest"

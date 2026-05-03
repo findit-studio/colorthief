@@ -8,6 +8,22 @@
 
 use super::{LABS_A, LABS_B, LABS_L};
 
+/// Squared Delta E 76 (squared Euclidean distance in LAB) between two
+/// LAB triples. Matches [`nearest_idx`]'s inline metric associativity
+/// (`(dl*dl + da*da) + db*db`), so independently-evaluated distances
+/// are bit-equal to those computed inside the scan loop. Standalone
+/// form is the reference shape used by metric-level property tests
+/// (`prop_de76_self_distance_zero`, `prop_de76_symmetric`,
+/// `prop_de76_nonneg` in `colorthief-dataset/tests/properties.rs`).
+#[allow(dead_code)]
+#[inline]
+pub fn delta_e_76_sq(lab1: [f32; 3], lab2: [f32; 3]) -> f32 {
+  let dl = lab1[0] - lab2[0];
+  let da = lab1[1] - lab2[1];
+  let db = lab1[2] - lab2[2];
+  (dl * dl + da * da) + db * db
+}
+
 /// Reference implementation. On targets where the dispatcher selects
 /// a SIMD backend in production builds (e.g. aarch64 NEON), this
 /// function is only called from parity tests and the bench harness;
