@@ -9,7 +9,9 @@
 //! Asserting on family / hue rather than exact xkcd names keeps the
 //! tests robust across xkcd-dataset regenerations.
 
-use colorthief::{RgbFrame, extract};
+use colorthief::{
+  Algorithm, Dominant, Mmcq, Rgb48Frame, RgbFrame, RgbFrameError, extract, extract_rgb48,
+};
 
 fn solid_color_frame(rgb: [u8; 3], width: u32, height: u32) -> Vec<u8> {
   let mut buf = Vec::with_capacity((width * height) as usize * 3);
@@ -294,4 +296,197 @@ fn extract_no_zero_population_dominants_below_distinct_color_floor() {
       d.color.name(),
     );
   }
+}
+
+// ---------------------------------------------------------------------
+// Rgb48Frame (16-bit-per-channel) integration tests
+// ---------------------------------------------------------------------
+
+/// Build a u16 RGB plane filled with one repeated pixel. Stride
+/// equals `3 * width` u16 elements (no padding).
+fn solid_color_frame_u16(rgb: [u16; 3], width: u32, height: u32) -> Vec<u16> {
+  let mut buf = Vec::with_capacity((width * height) as usize * 3);
+  for _ in 0..width * height {
+    buf.extend_from_slice(&rgb);
+  }
+  buf
+}
+
+/// Smoke test: pure red u16 input must reach a red-family dominant
+/// after the `>> 8` downscale + MMCQ + naming pipeline.
+#[test]
+fn extract_rgb48_on_solid_red_returns_a_red_named_color() {
+  let buf = solid_color_frame_u16([0xFF00, 0x0000, 0x0000], 8, 8);
+  let frame = Rgb48Frame::try_new(&buf, 8, 8, 24).expect("frame");
+  let dominants = extract_rgb48(frame, 5);
+  assert!(!dominants.is_empty(), "expected at least one dominant");
+  let top = dominants[0];
+  assert!(
+    top.color.family().as_str().contains("red") || top.color.name().contains("red"),
+    "top dominant on solid red u16 was rgb={:?} name={:?} family={:?}",
+    top.rgb,
+    top.color.name(),
+    top.color.family().as_str(),
+  );
+}
+
+/// Equivalence: `extract_rgb48(u16-widened-from-u8)` must produce
+/// exactly the same dominants as `extract(u8)`. The downscale
+/// `(u8 << 8) >> 8 == u8` is bit-exact, so MMCQ + naming sees
+/// identical data on both paths.
+#[test]
+fn extract_rgb48_widened_matches_extract_u8() {
+  // Mixed-color frame to exercise more than one MMCQ box.
+  let mut buf_u8 = Vec::with_capacity(64 * 3);
+  for i in 0..64 {
+    let rgb = match i % 4 {
+      0 => [200, 30, 30],
+      1 => [30, 30, 200],
+      2 => [30, 200, 30],
+      _ => [180, 180, 180],
+    };
+    buf_u8.extend_from_slice(&rgb);
+  }
+  let buf_u16: Vec<u16> = buf_u8.iter().map(|&b| (b as u16) << 8).collect();
+
+  let frame_u8 = RgbFrame::try_new(&buf_u8, 8, 8, 24).expect("u8 frame");
+  let frame_u16 = Rgb48Frame::try_new(&buf_u16, 8, 8, 24).expect("u16 frame");
+
+  let d_u8 = extract(frame_u8, 5);
+  let d_u16 = extract_rgb48(frame_u16, 5);
+
+  assert_eq!(d_u8.len(), d_u16.len(), "dominant counts must match");
+  for (a, b) in d_u8.iter().zip(d_u16.iter()) {
+    assert_eq!(
+      a.rgb, b.rgb,
+      "u8 and u16-widened paths produced different RGBs"
+    );
+    assert_eq!(a.population, b.population, "populations diverged");
+    assert_eq!(
+      a.color.name(),
+      b.color.name(),
+      "named colors diverged: u8={} u16={}",
+      a.color.name(),
+      b.color.name(),
+    );
+  }
+}
+
+/// `try_new` rejects zero-dimension frames.
+#[test]
+fn rgb48_try_new_rejects_zero_dimension() {
+  let buf = vec![0u16; 12];
+  let err = Rgb48Frame::try_new(&buf, 0, 4, 12).unwrap_err();
+  assert!(matches!(err, RgbFrameError::ZeroDimension { .. }));
+}
+
+/// `try_new` rejects stride < 3 * width (in u16 elements).
+#[test]
+fn rgb48_try_new_rejects_stride_too_small() {
+  let buf = vec![0u16; 16];
+  // width = 4 → min_stride = 12 u16 elements; supply 8.
+  let err = Rgb48Frame::try_new(&buf, 4, 2, 8).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      RgbFrameError::StrideTooSmall {
+        min_stride: 12,
+        stride: 8
+      }
+    ),
+    "expected StrideTooSmall, got {err:?}",
+  );
+}
+
+/// `try_new` rejects buffers shorter than `stride * height` u16
+/// elements.
+#[test]
+fn rgb48_try_new_rejects_plane_too_short() {
+  // width = 4, height = 4, stride = 12 → need 48 u16 elements; supply 30.
+  let buf = vec![0u16; 30];
+  let err = Rgb48Frame::try_new(&buf, 4, 4, 12).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      RgbFrameError::PlaneTooShort {
+        expected: 48,
+        actual: 30
+      }
+    ),
+    "expected PlaneTooShort, got {err:?}",
+  );
+}
+
+/// `extract_rgb48(_, 0)` returns an empty Vec — same contract as
+/// [`extract`].
+#[test]
+fn extract_rgb48_count_zero_returns_empty() {
+  let buf = solid_color_frame_u16([0x8000, 0x4000, 0x2000], 4, 4);
+  let frame = Rgb48Frame::try_new(&buf, 4, 4, 12).expect("frame");
+  let dominants = extract_rgb48(frame, 0);
+  assert!(dominants.is_empty());
+}
+
+// ---------------------------------------------------------------------
+// no_alloc-path API: Mmcq::extract with a Buffer (fixed-size array).
+// ---------------------------------------------------------------------
+
+/// `Mmcq::extract` writing into a `[Option<Dominant>; N]` buffer —
+/// the canonical no_alloc usage. Exercises the same pipeline as
+/// `extract` but without the convenience `Vec` wrapper.
+#[test]
+fn mmcq_extract_into_array_buffer_recovers_red() {
+  let buf = solid_color_frame([200, 50, 50], 8, 8);
+  let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+
+  let mut mmcq = Mmcq::new_boxed();
+  let mut out: [Option<Dominant>; 5] = [const { None }; 5];
+  mmcq.extract(frame.pixels(), 5, Algorithm::default(), &mut out);
+
+  let first = out
+    .iter()
+    .find_map(|o| o.as_ref())
+    .expect("expected at least one dominant");
+  assert!(
+    first.color.family().as_str().contains("red") || first.color.name().contains("red"),
+    "expected red-family dominant, got {:?}",
+    first.color.name(),
+  );
+  assert!(first.population > 0);
+}
+
+/// `Mmcq` reuse across calls — verify the workspace can be reused
+/// without leaking state from previous calls. Critical for the
+/// thread_local-cache pattern.
+#[test]
+fn mmcq_reuse_resets_state_between_calls() {
+  let mut mmcq = Mmcq::new_boxed();
+
+  // First call: red frame.
+  let red_buf = solid_color_frame([220, 20, 20], 8, 8);
+  let red_frame = RgbFrame::try_new(&red_buf, 8, 8, 24).expect("frame");
+  let mut red_out: [Option<Dominant>; 3] = [const { None }; 3];
+  mmcq.extract(red_frame.pixels(), 3, Algorithm::default(), &mut red_out);
+  let red_first = red_out
+    .iter()
+    .find_map(|o| o.as_ref())
+    .expect("red dominant");
+  assert!(
+    red_first.color.family().as_str().contains("red") || red_first.color.name().contains("red")
+  );
+
+  // Second call: blue frame. Same Mmcq, must NOT remember red state.
+  let blue_buf = solid_color_frame([20, 20, 220], 8, 8);
+  let blue_frame = RgbFrame::try_new(&blue_buf, 8, 8, 24).expect("frame");
+  let mut blue_out: [Option<Dominant>; 3] = [const { None }; 3];
+  mmcq.extract(blue_frame.pixels(), 3, Algorithm::default(), &mut blue_out);
+  let blue_first = blue_out
+    .iter()
+    .find_map(|o| o.as_ref())
+    .expect("blue dominant");
+  assert!(
+    blue_first.color.family().as_str().contains("blue") || blue_first.color.name().contains("blue"),
+    "second-call dominant should be blue, got {:?}",
+    blue_first.color.name(),
+  );
 }

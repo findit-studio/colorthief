@@ -9,14 +9,34 @@ homepage.workspace = true
 rust-version = "1.95.0"
 
 [dependencies]
-# Workspace dep already declares `default-features = false`, so we
-# explicitly enable `std` (always required by colorthief itself).
-# The `lut` feature flows through the [features] section below.
-colorthief-dataset = { workspace = true, features = ["std"] }
-thiserror          = { workspace = true, features = ["default"] }
+# Both deps inherit `default-features = false` from the workspace
+# (see workspace Cargo.toml). We re-enable specific features below
+# via this crate's [features] section so the no_std/no_alloc story
+# stays explicit at every level.
+colorthief-dataset = { workspace = true }
+thiserror          = { workspace = true }
 
 [features]
-default = ["lut"]
+# Default = std + alloc + LUT — the convenience tier. Disable
+# default-features for embedded / wasm-no-std targets.
+default = ["std", "lut"]
+
+# `std` enables `thread_local!`-cached MMCQ storage (zero-alloc-per-
+# call across many calls on the same thread). Implies `alloc`.
+std = ["alloc", "colorthief-dataset/std", "thiserror/std"]
+
+# `alloc` enables the heap-allocator-backed convenience surface:
+# `extract`/`extract_with` returning `Vec<Dominant>`, `Mmcq::new_boxed()`,
+# and the `impl Buffer<T> for Vec<T>`. Without `std`, MMCQ allocates
+# a fresh `Box<Mmcq>` per call (no caching).
+alloc = []
+
+# `single-threaded` provides a `OnceCell`-cached static `Mmcq` for
+# `no_std + alloc` callers who can guarantee single-threaded access
+# (typical wasm32-unknown-unknown, interrupt-free bare metal). The
+# cell is wrapped in an `unsafe impl Sync` shim — opt-in only.
+single-threaded = ["alloc"]
+
 # Pre-computed 32³ candidate-set LUT for CIEDE2000 (the default
 # `Algorithm`). Trades ~256-500 KB of static binary for ~2400× faster
 # CIEDE2000 lookups (71.5 µs → ~30 ns). Disable via

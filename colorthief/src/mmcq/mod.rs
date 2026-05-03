@@ -18,23 +18,103 @@
 //! 4. Each surviving box's pixel-count-weighted average is one
 //!    dominant.
 
-use crate::RgbFrame;
-
 mod simd;
+
+use core::mem::MaybeUninit;
+
+use crate::Buffer;
 
 const SIGBITS: u32 = 5;
 const RSHIFT: u32 = 8 - SIGBITS;
 const HISTO_LEVELS: usize = 1 << SIGBITS; // 32
 const HISTO_SIZE: usize = 1 << (3 * SIGBITS); // 32768
 const MAX_ITERATIONS: usize = 1000;
-const FRACT_BY_POPULATIONS: f64 = 0.75;
+/// MMCQ never produces more than `target` boxes, and `target` is
+/// clamped to 256. Plus a small safety margin for the in-loop
+/// "exhausted" pile that's drained back at the end. 256 is enough.
+const MAX_BOXES: usize = 256;
 
-/// One dominant returned by [`quantize`]. `population` is the number
-/// of source pixels assigned to this box; the public `extract` wraps
-/// this into [`crate::Dominant`] alongside the named [`Color`] match.
-pub(crate) struct Dominant {
-  pub rgb: [u8; 3],
-  pub population: u32,
+// =====================================================================
+// BoxArena — fixed-capacity, push/pop/sort-by-key inline storage for
+// VBox. Replaces the `Vec<VBox>` that MMCQ used pre-no_alloc-refactor.
+// =====================================================================
+
+/// Inline-array `Vec<VBox>` replacement. ~6 KB inline, no heap.
+///
+/// Used in two places: as the splittable queue inside [`Mmcq::boxes`]
+/// and as the side "exhausted" pile inside `iterate_split`. Every
+/// public method matches the `Vec<VBox>` API piece used by the
+/// pre-refactor MMCQ (push/pop/len/sort/extend) so the algorithm
+/// translation is one-to-one.
+pub(crate) struct BoxArena {
+  data: [MaybeUninit<VBox>; MAX_BOXES],
+  len: usize,
+}
+
+#[allow(unsafe_code)]
+impl BoxArena {
+  /// Empty arena. `const fn` so [`Mmcq::new`] is `const`.
+  pub const fn new() -> Self {
+    Self {
+      data: [const { MaybeUninit::uninit() }; MAX_BOXES],
+      len: 0,
+    }
+  }
+
+  pub fn len(&self) -> usize {
+    self.len
+  }
+
+  /// Push `v`. Returns `false` if at capacity. MMCQ's internals never
+  /// produce more than `MAX_BOXES` boxes given the `target` clamp; the
+  /// `false` return is a safety net rather than an expected path.
+  pub fn push(&mut self, v: VBox) -> bool {
+    if self.len >= MAX_BOXES {
+      return false;
+    }
+    self.data[self.len].write(v);
+    self.len += 1;
+    true
+  }
+
+  pub fn pop(&mut self) -> Option<VBox> {
+    if self.len == 0 {
+      return None;
+    }
+    self.len -= 1;
+    // SAFETY: `self.data[..self.len + 1]` were initialized via `push`;
+    // we just decremented `len` so `self.data[self.len]` is still
+    // initialized and we read it out, leaving the slot uninitialized
+    // (which is fine — `len` reflects the new boundary).
+    Some(unsafe { self.data[self.len].assume_init_read() })
+  }
+
+  pub fn as_mut_slice(&mut self) -> &mut [VBox] {
+    // SAFETY: `self.data[..self.len]` are initialized.
+    unsafe { core::slice::from_raw_parts_mut(self.data.as_mut_ptr() as *mut VBox, self.len) }
+  }
+
+  /// Drop all initialized elements; reset `len` to 0.
+  pub fn clear(&mut self) {
+    while self.pop().is_some() {}
+  }
+
+  /// Move every element from `self` into `dst`. After return, `self`
+  /// is empty. Used at the end of `iterate_split` to merge the
+  /// "exhausted" pile back into the splittable queue.
+  pub fn drain_into(&mut self, dst: &mut Self) {
+    while let Some(v) = self.pop() {
+      // MMCQ invariant: total boxes never exceeds MAX_BOXES, so
+      // `dst.push` should never fail in practice.
+      let _ = dst.push(v);
+    }
+  }
+}
+
+impl Drop for BoxArena {
+  fn drop(&mut self) {
+    self.clear();
+  }
 }
 
 /// Encode a 5-bit (R, G, B) coord into a flat histogram index.
@@ -46,7 +126,7 @@ fn histo_index(r: u32, g: u32, b: u32) -> usize {
 /// A 3-D bounding box in 5-bit RGB space. Bounds are inclusive
 /// (`r1..=r2`). Pixel count + average color are cached on first access.
 #[derive(Clone)]
-struct VBox {
+pub(crate) struct VBox {
   r1: u32,
   r2: u32,
   g1: u32,
@@ -145,16 +225,26 @@ impl VBox {
   }
 }
 
-/// Build the 32K-entry histogram from a frame's pixels.
-fn build_histogram(frame: RgbFrame<'_>) -> Vec<u32> {
-  let mut histo = vec![0u32; HISTO_SIZE];
-  for [r, g, b] in frame.pixels() {
+/// Build the 32K-entry histogram from an iterator of u8 RGB pixels
+/// into a caller-provided slice.
+///
+/// `histo` must be `HISTO_SIZE` entries; passed by mutable reference
+/// so the caller decides where the 128 KB lives (typically inside
+/// [`Mmcq`], on the heap or in `static mut`). Reset to zero before
+/// counting.
+///
+/// Generic over the pixel source so callers can feed in
+/// [`crate::RgbFrame::pixels`] (8-bit packed) or
+/// [`crate::Rgb48Frame::pixels`] (16-bit packed, downscaled to u8 in
+/// the iterator) without duplicating MMCQ.
+fn build_histogram<I: Iterator<Item = [u8; 3]>>(pixels: I, histo: &mut [u32; HISTO_SIZE]) {
+  histo.fill(0);
+  for [r, g, b] in pixels {
     let rv = (r as u32) >> RSHIFT;
     let gv = (g as u32) >> RSHIFT;
     let bv = (b as u32) >> RSHIFT;
     histo[histo_index(rv, gv, bv)] = histo[histo_index(rv, gv, bv)].saturating_add(1);
   }
-  histo
 }
 
 /// Initial bounding box covering all populated histogram bins. Returns
@@ -373,16 +463,20 @@ fn median_cut(vbox: &VBox, histo: &[u32]) -> Option<(VBox, Option<VBox>)> {
 /// returns `Some((_, None))`) are moved to a side `exhausted` pile so
 /// they don't get popped again, but the loop keeps trying lower-
 /// scored boxes — they may still be productively splittable.
-fn iterate_split<F>(boxes: &mut Vec<VBox>, target: usize, histo: &[u32], score: F)
+fn iterate_split<F>(boxes: &mut BoxArena, target: usize, histo: &[u32], score: F)
 where
   F: Fn(&mut VBox, &[u32]) -> u64,
 {
   let mut iters = 0;
-  let mut exhausted: Vec<VBox> = Vec::new();
+  let mut exhausted = BoxArena::new();
 
   while boxes.len() + exhausted.len() < target && iters < MAX_ITERATIONS {
     iters += 1;
-    boxes.sort_by_key(|b| {
+    // `sort_unstable_by_key` (not `sort_by_key`) — the unstable in-
+    // place sort is `core::slice` and works in `no_alloc`. Tie-break
+    // ordering doesn't affect MMCQ correctness; the score is the
+    // only thing that matters for splittable selection.
+    boxes.as_mut_slice().sort_unstable_by_key(|b| {
       // sort_by_key needs a fresh `b` each call; clone is cheap (no
       // alloc — VBox is `Copy`-like aside from the `Option` caches).
       let mut probe = b.clone();
@@ -404,17 +498,23 @@ where
           // `top` was non-empty above so this should be unreachable;
           // defensive: keep `top` as exhausted rather than fabricating
           // empty children.
-          (0, 0) => exhausted.push(top),
+          (0, 0) => {
+            let _ = exhausted.push(top);
+          }
           // `(populated, empty)` or `(empty, populated)` — push only
           // the populated child. Net: the queue shrinks by one
           // splittable candidate but `boxes.len() + exhausted.len()`
           // doesn't grow toward `target`, so the loop continues with
           // the next-highest box.
-          (0, _) => boxes.push(right),
-          (_, 0) => boxes.push(left),
+          (0, _) => {
+            let _ = boxes.push(right);
+          }
+          (_, 0) => {
+            let _ = boxes.push(left);
+          }
           (_, _) => {
-            boxes.push(left);
-            boxes.push(right);
+            let _ = boxes.push(left);
+            let _ = boxes.push(right);
           }
         }
       }
@@ -422,87 +522,207 @@ where
         // Unsplittable (single-bin or median-cut found no productive
         // split). Set aside so we don't pop it again, but don't break
         // — lower-scored boxes might still split.
-        exhausted.push(only);
+        let _ = exhausted.push(only);
       }
       None => {
         // `top.count() > 0` was just verified, so median_cut returning
         // `None` is unreachable in practice. Defensive: mark exhausted.
-        exhausted.push(top);
+        let _ = exhausted.push(top);
       }
     }
   }
 
-  // Re-merge so `quantize` sees the full set (splittable + exhausted).
-  boxes.extend(exhausted);
+  // Re-merge so callers see the full set (splittable + exhausted).
+  exhausted.drain_into(boxes);
 }
 
-/// Run MMCQ on `frame` and return up to `max_colors` dominants.
-pub(crate) fn quantize(frame: RgbFrame<'_>, max_colors: u8) -> Vec<Dominant> {
-  // MMCQ is undefined outside [2, 256]. Saturate to that range.
-  let target = (max_colors as usize).clamp(2, 256);
+// =====================================================================
+// Mmcq — MMCQ workspace + extract method.
+// =====================================================================
 
-  let histo = build_histogram(frame);
-  let initial = match initial_vbox(&histo) {
-    Some(b) => b,
-    None => return Vec::new(),
-  };
+/// MMCQ workspace. Holds the 32K-entry histogram and the box queue
+/// inline as fixed-size arrays — no heap allocations for either.
+///
+/// Total in-place footprint: ~134 KB (`[u32; 32_768]` = 128 KB +
+/// `BoxArena` ~6 KB + `usize`).
+///
+/// # Construction
+///
+/// Use [`Mmcq::new_boxed`] (when `alloc` is enabled) for runtime
+/// construction — it places the workspace on the heap via
+/// `Box::new_zeroed` and avoids a 134 KB stack frame. Use
+/// [`Mmcq::new`] (a `const fn`) for `static` placement on `no_alloc`
+/// targets:
+///
+/// ```ignore
+/// // alloc available:
+/// let mut mmcq = colorthief::Mmcq::new_boxed();
+///
+/// // bare metal / wasm / other no_alloc:
+/// static mut MMCQ: colorthief::Mmcq = colorthief::Mmcq::new();
+/// ```
+///
+/// **Do not** call `Mmcq::new()` in a non-`static` non-`const`
+/// context — it will create a 134 KB stack frame and almost certainly
+/// blow embedded stacks (and is risky even on desktop in deep call
+/// chains).
+pub struct Mmcq {
+  histogram: [u32; HISTO_SIZE],
+  boxes: BoxArena,
+}
 
-  let mut boxes = vec![initial];
+impl Default for Mmcq {
+  /// **Warning**: same caveat as [`Mmcq::new`] — this materializes a
+  /// 134 KB stack frame in the caller. Use [`Mmcq::new_boxed`] or
+  /// `static mut M: Mmcq = Mmcq::new();` instead.
+  fn default() -> Self {
+    Self::new()
+  }
+}
 
-  // Phase 1: split by raw population.
-  //
-  // The TS reference passes a fractional target to its `iterate` loop
-  // (e.g. `0.75 * 5 = 3.75`) and the inner `ncolors >= target` check
-  // effectively rounds the boundary up — phase 1 runs until 4 boxes,
-  // not 3. A bare `(... as usize)` cast (truncation toward zero) gave
-  // us 3 boxes, ending phase 1 early and ceding the next split to
-  // phase 2's `population * volume` ordering. For `count` values
-  // where `0.75 * count` has a fractional part (3, 5, 6, 7, 9, …),
-  // that lets phase 2 favour a sparse-wide box over a denser-compact
-  // one and silently changes the dominant set vs. the reference
-  // implementation. Use `ceil` to match the TS contract. (Codex
-  // adversarial review round 5, 2026-05-03.)
-  let phase1_target = (FRACT_BY_POPULATIONS * target as f64).ceil() as usize;
-  iterate_split(&mut boxes, phase1_target, &histo, |b, h| b.count(h) as u64);
+impl Mmcq {
+  /// Zero-initialized workspace. **Only call this in a `static` /
+  /// `const` context** (or any context where you've confirmed your
+  /// stack budget can absorb 134 KB).
+  ///
+  /// ```ignore
+  /// static mut MMCQ: colorthief::Mmcq = colorthief::Mmcq::new();
+  /// ```
+  pub const fn new() -> Self {
+    Self {
+      histogram: [0u32; HISTO_SIZE],
+      boxes: BoxArena::new(),
+    }
+  }
 
-  // Phase 2: split by population * volume, finishing the split tree.
-  iterate_split(&mut boxes, target, &histo, |b, h| {
-    (b.count(h) as u64) * (b.volume() as u64)
-  });
+  /// Heap-allocated workspace constructor — avoids the 134 KB stack
+  /// frame `Mmcq::new()` would produce in the caller.
+  ///
+  /// Uses `Box::new_zeroed` (stable since Rust 1.82) which allocates
+  /// and zero-fills directly on the heap; `assume_init` is a bit-level
+  /// cast with no copy.
+  #[cfg(feature = "alloc")]
+  pub fn new_boxed() -> alloc::boxed::Box<Self> {
+    // SAFETY: every field of `Mmcq` has a valid all-zero bit-pattern:
+    //
+    //   - histogram: `[u32; HISTO_SIZE]`, zero is valid u32
+    //   - boxes: `BoxArena { data: [MaybeUninit<VBox>; N], len: 0 }`
+    //     `MaybeUninit` accepts any pattern, `len = 0` is valid.
+    #[allow(unsafe_code)]
+    unsafe {
+      alloc::boxed::Box::<Self>::new_zeroed().assume_init()
+    }
+  }
 
-  // Sort the final palette descending by population so the caller gets
-  // the most-dominant color first.
-  boxes.sort_by_key(|b| {
-    let mut probe = b.clone();
-    core::cmp::Reverse(probe.count(&histo))
-  });
+  /// Run MMCQ on a pixel iterator, naming each dominant via `algo`,
+  /// pushing the named [`crate::Dominant`]s into `out` (sorted
+  /// descending by population). Stops early on the first `out`
+  /// rejection, leaving the buffer in whatever state it was in.
+  ///
+  /// **Allocates nothing** — all working storage lives in `&mut self`.
+  /// Resets the histogram and box queue at entry, so a single `Mmcq`
+  /// can be reused across many calls (e.g. via `thread_local!`).
+  pub fn extract<I, B>(&mut self, pixels: I, count: u8, algo: crate::Algorithm, out: &mut B)
+  where
+    I: Iterator<Item = [u8; 3]>,
+    B: Buffer<crate::Dominant>,
+  {
+    if count == 0 {
+      return;
+    }
 
-  // Filter zero-population boxes. `median_cut` can split a sparsely-
-  // populated parent into a (populated, empty) pair when the cut
-  // axis only has one occupied slice, and `iterate_split` accepts
-  // both halves. Without this filter the empty box's `avg()` would
-  // fall through to the geometric-center fallback, fabricating a
-  // dominant color that never appeared in the frame. (Codex
-  // adversarial review, 2026-05-02.)
-  boxes
-    .into_iter()
-    .filter_map(|mut b| {
-      let pop = b.count(&histo);
-      if pop == 0 {
-        None
-      } else {
-        Some(Dominant {
-          rgb: b.avg(&histo),
-          population: pop,
-        })
+    // Reset state from previous calls.
+    self.boxes.clear();
+
+    // Build histogram.
+    build_histogram(pixels, &mut self.histogram);
+
+    // Initial bounding box. Empty histogram → no work.
+    let initial = match initial_vbox(&self.histogram) {
+      Some(b) => b,
+      None => return,
+    };
+    let _ = self.boxes.push(initial);
+
+    // MMCQ is undefined outside [2, 256]. Saturate to that range.
+    let target = (count as usize).clamp(2, 256);
+
+    // Phase 1: split by raw population. Phase target uses the
+    // `ceil(0.75 * target)` shape the TS reference relies on:
+    // `(3 * target).div_ceil(4)` matches `(0.75 * target).ceil() as
+    // usize` exactly for every `target ∈ [2, 256]` (verified across
+    // the range) and stays in `core` (`f64::ceil` is std-only).
+    let phase1_target = (3 * target).div_ceil(4);
+    iterate_split(&mut self.boxes, phase1_target, &self.histogram, |b, h| {
+      b.count(h) as u64
+    });
+
+    // Phase 2: split by population * volume.
+    iterate_split(&mut self.boxes, target, &self.histogram, |b, h| {
+      (b.count(h) as u64) * (b.volume() as u64)
+    });
+
+    // Sort the final palette descending by population so the caller
+    // gets the most-dominant color first.
+    let histo: &[u32] = &self.histogram;
+    self.boxes.as_mut_slice().sort_unstable_by_key(|b| {
+      let mut probe = b.clone();
+      core::cmp::Reverse(probe.count(histo))
+    });
+
+    // Push dominants to `out`, capped at `count`, skipping zero-
+    // population boxes (sparse parent split into populated+empty).
+    let mut written: usize = 0;
+    let max_out = count as usize;
+    for vbox in self.boxes.as_mut_slice().iter_mut() {
+      if written >= max_out {
+        break;
       }
-    })
-    .collect()
+      let pop = vbox.count(histo);
+      if pop == 0 {
+        continue;
+      }
+      let rgb = vbox.avg(histo);
+      let dominant = crate::Dominant {
+        rgb,
+        color: algo.extract(rgb),
+        population: pop,
+      };
+      if out.try_push(dominant).is_some() {
+        // Buffer full; stop.
+        break;
+      }
+      written += 1;
+    }
+  }
+}
+
+// =====================================================================
+// alloc-tier convenience wrapper (used by lib.rs's `extract*`).
+// =====================================================================
+
+/// Run MMCQ on a pixel iterator and return up to `count` named
+/// dominants in a `Vec`. Allocates a `Box<Mmcq>` workspace on every
+/// call (~134 KB heap); for repeated calls in the same thread, prefer
+/// the thread-local-cached path in lib.rs once available.
+///
+/// Used by lib.rs's alloc-tier `extract*` helpers.
+#[cfg(feature = "alloc")]
+pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
+  pixels: I,
+  count: u8,
+  algo: crate::Algorithm,
+) -> alloc::vec::Vec<crate::Dominant> {
+  let mut mmcq = Mmcq::new_boxed();
+  let mut out: alloc::vec::Vec<crate::Dominant> = alloc::vec::Vec::new();
+  mmcq.extract(pixels, count, algo, &mut out);
+  out
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::RgbFrame;
 
   /// Build a synthetic RgbFrame from a Vec of [R,G,B] triples so tests
   /// don't have to open image files.
@@ -521,7 +741,7 @@ mod tests {
     let pixels = vec![[255, 0, 0]; 16];
     let buf = make_frame(4, 4, &pixels);
     let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-    let dominants = quantize(frame, 5);
+    let dominants = quantize(frame.pixels(), 5, crate::Algorithm::default());
     assert!(!dominants.is_empty(), "MMCQ produced zero dominants");
     let top = &dominants[0];
     // 5-bit quantization shifts pure red (255,0,0) → bin (31,0,0).
@@ -543,7 +763,7 @@ mod tests {
     let pixels = vec![[255u8, 255, 255]; 16];
     let buf = make_frame(4, 4, &pixels);
     let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-    let dominants = quantize(frame, 5);
+    let dominants = quantize(frame.pixels(), 5, crate::Algorithm::default());
     let top = &dominants[0];
     // bin (31, 31, 31); center = (31.5 * 8) = 252.
     assert_eq!(top.rgb, [252, 252, 252], "expected bin-center white");
@@ -556,7 +776,7 @@ mod tests {
     let pixels = vec![[0u8, 0, 0]; 16];
     let buf = make_frame(4, 4, &pixels);
     let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-    let dominants = quantize(frame, 5);
+    let dominants = quantize(frame.pixels(), 5, crate::Algorithm::default());
     let top = &dominants[0];
     assert_eq!(top.rgb, [4, 4, 4], "expected bin-center black");
   }
@@ -572,7 +792,7 @@ mod tests {
       let pixels = vec![[value; 3]; 16];
       let buf = make_frame(4, 4, &pixels);
       let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-      let dominants = quantize(frame, 5);
+      let dominants = quantize(frame.pixels(), 5, crate::Algorithm::default());
       let top = &dominants[0];
       assert_eq!(
         top.rgb,
@@ -594,7 +814,7 @@ mod tests {
     }
     let buf = make_frame(4, 4, &pixels);
     let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
-    let dominants = quantize(frame, 5);
+    let dominants = quantize(frame.pixels(), 5, crate::Algorithm::default());
     assert!(
       dominants.len() >= 2,
       "expected at least 2 dominants, got {}",
@@ -620,7 +840,7 @@ mod tests {
     // Row 1: red, red, then 2 bytes of garbage.
     buf.extend_from_slice(&[255, 0, 0, 255, 0, 0, 0xFF, 0xFF]);
     let frame = RgbFrame::try_new(&buf, 2, 2, 8).expect("frame with padding");
-    let dominants = quantize(frame, 5);
+    let dominants = quantize(frame.pixels(), 5, crate::Algorithm::default());
     let top = &dominants[0];
     // If padding leaked in, we'd see white-ish (255,255,255) dominate.
     // The stride-respecting path keeps it red.
