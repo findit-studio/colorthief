@@ -7,8 +7,9 @@
 //!    pixels of an [`RgbFrame`], producing up to `count` dominant RGB
 //!    values plus the pixel population behind each.
 //! 2. Each dominant is mapped to its nearest entry in
-//!    [`colorthief_dataset`]'s xkcd-hierarchy table via Delta E 76 (LAB
-//!    Euclidean) distance.
+//!    [`colorthief_dataset`]'s xkcd-hierarchy table via the algorithm
+//!    chosen by [`Algorithm`] (default: [`Algorithm::Ciede2000Exact`],
+//!    the modern perceptual gold-standard).
 //!
 //! The result is a `Vec<`[`Dominant`]`>` carrying both the actual
 //! extracted RGB (for swatch rendering) and the named [`Color`] (for
@@ -68,8 +69,9 @@ use thiserror::Error;
 pub struct Dominant {
   /// MMCQ-extracted dominant RGB.
   pub rgb: [u8; 3],
-  /// Closest entry in the xkcd hierarchy to `rgb`, by Delta E 76 in
-  /// LAB space.
+  /// Closest entry in the xkcd hierarchy to `rgb`, under the
+  /// algorithm passed to [`extract_with`] (or [`Algorithm::default`]
+  /// when [`extract`] is used).
   pub color: &'static Color,
   /// Number of source-frame pixels assigned to this dominant's box.
   pub population: u32,
@@ -226,8 +228,10 @@ impl<'a> RgbFrame<'a> {
 /// honoured as a strict upper bound — the result is truncated to
 /// `count` so `extract(frame, 1)` returns at most one entry.
 ///
-/// Naming uses [`Algorithm::default`] (Delta E 76, SIMD-dispatched).
-/// To pick a different metric explicitly use [`extract_with`].
+/// Naming uses [`Algorithm::default`] — currently
+/// [`Algorithm::Ciede2000Exact`], the modern perceptual gold-standard
+/// (~71 µs/lookup scalar). Throughput-sensitive consumers should pick
+/// a faster metric via [`extract_with`].
 #[inline]
 pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
   extract_with(frame, count, Algorithm::default())

@@ -16,11 +16,11 @@
 //!
 //! # Distance metric
 //!
-//! [`Color::nearest_to`] uses **Delta E 76** (Euclidean distance in LAB).
-//! It's adequate for naming against a well-separated 950-color palette;
-//! the (~50-line) CIEDE2000 upgrade would only change borderline cases
-//! near the gray and yellow regions and is left as a follow-up if real
-//! usage shows naming drift.
+//! Choose via [`Algorithm`]; the default ([`Algorithm::Ciede2000Exact`])
+//! is the modern perceptual gold-standard. Faster alternatives are
+//! available via [`Color::nearest_to`] (Delta E 76, ~470 ns NEON) and
+//! [`Color::nearest_to_cie94`] (CIE94, ~620 ns NEON) for throughput-
+//! sensitive callers willing to trade borderline accuracy for speed.
 //!
 //! # Attribution
 //!
@@ -231,15 +231,16 @@ impl Color {
   /// backend is bit-identical — see [`crate::nearest`] for the
   /// dispatch contract and parity tests.
   ///
-  /// # When to use this vs. [`Self::nearest_to_ciede2000`]
+  /// # When to use this method
   ///
-  /// Delta E 76 is the **default** for a reason: against this
-  /// crate's well-clustered 949-entry xkcd palette it picks the same
-  /// named entry as CIEDE2000 in the overwhelming majority of cases,
-  /// runs ~2× over scalar on aarch64 NEON, and has bit-identical
-  /// SIMD parity. Reach for [`Self::nearest_to_ciede2000`] only when
-  /// you've measured Delta E 76 mis-naming colours on real footage,
-  /// typically near the gray / yellow boundary.
+  /// Delta E 76 is the *fast* metric: against this crate's well-
+  /// clustered 949-entry xkcd palette it picks the same named entry
+  /// as CIEDE2000 in the overwhelming majority of cases, at ~150×
+  /// the throughput of [`Algorithm::Ciede2000Exact`] (the default
+  /// returned by [`Algorithm::default`]). Reach for it when you've
+  /// measured the slower default bottlenecking real workloads and
+  /// can tolerate borderline misnamings near the gray / yellow
+  /// boundary.
   pub fn nearest_to(rgb: [u8; 3]) -> &'static Color {
     crate::nearest::nearest(rgb_to_lab(rgb))
   }
@@ -317,8 +318,6 @@ pub enum Algorithm {
   /// scalar). SIMD-dispatched on every supported arch with bit-
   /// identical parity. Recommended for search-vocabulary indexing
   /// where throughput matters more than borderline accuracy.
-  /// **Default.**
-  #[default]
   DeltaE76,
 
   /// **CIE94 (Delta E 94, graphic-arts weighting)** — middle ground
@@ -336,11 +335,15 @@ pub enum Algorithm {
   /// Delta E 76 scan.
   Ciede2000,
 
-  /// **Strict full-scan CIEDE2000** — no prefilter. ~5× slower than
-  /// [`Self::Ciede2000`]; reach for this only when you've measured
-  /// the prefilter diverging on your real inputs (the prefilter is
-  /// validated on the 17³ grid but not across every 8-bit RGB
-  /// input).
+  /// **Strict full-scan CIEDE2000** — the modern perceptual gold-
+  /// standard, no prefilter. Returned by [`Algorithm::default`] so
+  /// consumers of [`Algorithm::extract`] and crate-level entry points
+  /// like `colorthief::extract` get the most accurate naming out of
+  /// the box. ~5× slower than [`Self::Ciede2000`] (no prefilter
+  /// shortcut) and ~150× slower than [`Self::DeltaE76`]; throughput-
+  /// sensitive callers should pick a faster variant explicitly.
+  /// **Default.**
+  #[default]
   Ciede2000Exact,
 }
 
