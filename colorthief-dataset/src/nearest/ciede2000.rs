@@ -46,7 +46,7 @@ use core::f32::consts::PI;
 
 use libm::{atan2f, cosf, expf, sinf, sqrtf};
 
-use super::{LABS_A, LABS_B, LABS_L};
+use super::{LABS_A, LABS_B, LABS_C, LABS_L};
 
 const RAD_TO_DEG: f32 = 180.0 / PI;
 const DEG_TO_RAD: f32 = PI / 180.0;
@@ -71,14 +71,45 @@ fn pow7(x: f32) -> f32 {
 /// Squared CIEDE2000 difference between two LAB triples (D65, 2°
 /// observer, sRGB-anchored). Always `>= 0`; exposed as squared form
 /// for nearest-neighbor ranking.
+///
+/// Convenience wrapper around [`delta_e_2000_sq_with_chromas`] that
+/// computes the step-1 chromas from the LAB inputs. Production
+/// nearest-neighbor scans call the helper directly with `c1` read
+/// from [`super::LABS_C`] (pre-computed at xtask time) and `c2`
+/// hoisted out of the inner loop — saves two `sqrtf`s per pair vs.
+/// recomputing them every iteration. This thin wrapper stays
+/// available for tests against the Sharma (2005) reference table
+/// and for any future caller that wants CIEDE2000 between two
+/// arbitrary LAB triples without precomputing chromas.
+#[allow(dead_code)]
 #[inline]
 pub fn delta_e_2000_sq(lab1: [f32; 3], lab2: [f32; 3]) -> f32 {
+  let c1 = sqrtf(lab1[1] * lab1[1] + lab1[2] * lab1[2]);
+  let c2 = sqrtf(lab2[1] * lab2[1] + lab2[2] * lab2[2]);
+  delta_e_2000_sq_with_chromas(lab1, c1, lab2, c2)
+}
+
+/// Squared CIEDE2000 with the step-1 chromas (`C₁`, `C₂`) supplied
+/// by the caller. Saves two `sqrtf`s per call vs.
+/// [`delta_e_2000_sq`]. The hot nearest-neighbor loops use this
+/// directly with `c1` from [`super::LABS_C`] (pre-computed at xtask
+/// codegen time) and `c2` hoisted once per query.
+///
+/// CIEDE2000 is symmetric in its arguments; callers may pass either
+/// the entry or the query as `lab1`/`lab2` as long as the chromas
+/// match the corresponding LAB.
+///
+/// `#[inline(always)]` because the function body (~100 lines of f32
+/// math + transcendentals) is right at the inliner's heuristic
+/// threshold; without forcing inlining, criterion measured a 22%
+/// regression on the prefiltered re-rank loop where this helper is
+/// the inner loop's only call.
+#[inline(always)]
+fn delta_e_2000_sq_with_chromas(lab1: [f32; 3], c1: f32, lab2: [f32; 3], c2: f32) -> f32 {
   let [l1, a1, b1] = lab1;
   let [l2, a2, b2] = lab2;
 
-  // Step 1: chroma C₁, C₂, mean C̄.
-  let c1 = sqrtf(a1 * a1 + b1 * b1);
-  let c2 = sqrtf(a2 * a2 + b2 * b2);
+  // Step 1: mean C̄ from caller-supplied chromas.
   let cbar = 0.5 * (c1 + c2);
 
   // Step 2: G — compresses `a` for low-chroma pairs to make near-gray
@@ -190,13 +221,23 @@ fn hue_atan2_deg(y: f32, x: f32) -> f32 {
 /// Full-scan reference. Iterates every palette entry, computes
 /// `ΔE00²`, tracks the running minimum. ~86 µs/query for 949 entries
 /// on Apple Silicon.
+///
+/// Reads pre-computed entry chroma from [`super::LABS_C`] and
+/// hoists the query chroma once outside the loop. Saves two
+/// `sqrtf`s per pair vs. the naive
+/// `delta_e_2000_sq(query, entry_lab)` call, ~5% scalar speedup.
 pub fn nearest_idx(query: [f32; 3]) -> usize {
   let n = LABS_L.len();
+  // Hoist the query (lab2) chroma — same value across all 949
+  // iterations.
+  let q_c = sqrtf(query[1] * query[1] + query[2] * query[2]);
+
   let mut best_idx = 0usize;
   let mut best_d2 = f32::INFINITY;
   for i in 0..n {
     let entry_lab = [LABS_L[i], LABS_A[i], LABS_B[i]];
-    let d2 = delta_e_2000_sq(query, entry_lab);
+    let entry_c = LABS_C[i];
+    let d2 = delta_e_2000_sq_with_chromas(entry_lab, entry_c, query, q_c);
     if d2 < best_d2 {
       best_d2 = d2;
       best_idx = i;
@@ -274,14 +315,18 @@ pub fn nearest_idx_prefiltered(query: [f32; 3]) -> usize {
     top[j] = (d2, i);
   }
 
-  // Stage 2: CIEDE2000 re-rank over the K candidates.
+  // Stage 2: CIEDE2000 re-rank over the K candidates. Reuse the
+  // pre-computed entry chroma from `LABS_C` and hoist the query
+  // chroma once for the K iterations (saves 2 × K = 192 sqrtfs at
+  // the K=96 default).
+  let q_c = sqrtf(query[1] * query[1] + query[2] * query[2]);
   let first_idx = top[0].1;
   let first_lab = [LABS_L[first_idx], LABS_A[first_idx], LABS_B[first_idx]];
   let mut best_idx = first_idx;
-  let mut best_d2 = delta_e_2000_sq(query, first_lab);
+  let mut best_d2 = delta_e_2000_sq_with_chromas(first_lab, LABS_C[first_idx], query, q_c);
   for &(_, idx) in &top[1..] {
     let entry_lab = [LABS_L[idx], LABS_A[idx], LABS_B[idx]];
-    let d2 = delta_e_2000_sq(query, entry_lab);
+    let d2 = delta_e_2000_sq_with_chromas(entry_lab, LABS_C[idx], query, q_c);
     if d2 < best_d2 {
       best_d2 = d2;
       best_idx = idx;

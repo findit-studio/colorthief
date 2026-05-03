@@ -44,12 +44,22 @@
 
 use libm::sqrtf;
 
-use super::{LABS_A, LABS_B, LABS_L};
+use super::{LABS_A, LABS_B, LABS_C, LABS_L};
 
 /// Squared CIE94 distance between a palette-entry LAB (the reference,
 /// `lab_ref`) and a query LAB (the sample, `lab_sample`). Always
 /// non-negative; squared form preserves nearest-neighbor ordering and
 /// saves a `sqrtf` per query.
+///
+/// `nearest_idx` doesn't call this — the production hot loop inlines
+/// the formula and reads pre-computed entry chroma from
+/// [`super::LABS_C`] to skip the `sqrtf(a² + b²)`. This standalone
+/// function is the reference shape used by tests
+/// (`self_distance_is_zero`, `asymmetric_in_arguments`) and stays
+/// available for any future caller that wants CIE94 between two
+/// arbitrary LAB triples without going through the palette-lookup
+/// path.
+#[allow(dead_code)]
 #[inline]
 pub fn delta_e_94_sq(lab_ref: [f32; 3], lab_sample: [f32; 3]) -> f32 {
   let [l1, a1, b1] = lab_ref;
@@ -83,13 +93,34 @@ pub fn delta_e_94_sq(lab_ref: [f32; 3], lab_sample: [f32; 3]) -> f32 {
 
 /// Find the [`super::COLORS`] index minimising CIE94 to `query`.
 /// Each entry is treated as the reference; the query as the sample.
+///
+/// Uses [`super::LABS_C`] for the per-entry chroma `C₁`, saving the
+/// `sqrtf(a² + b²)` per pair (one `sqrtf` × N entries per query).
 pub fn nearest_idx(query: [f32; 3]) -> usize {
   let n = LABS_L.len();
+  let q_a = query[1];
+  let q_b = query[2];
+  // Sample chroma C₂ — constant across the loop, hoist out.
+  let c2 = sqrtf(q_a * q_a + q_b * q_b);
+
   let mut best_idx = 0usize;
   let mut best_d2 = f32::INFINITY;
   for i in 0..n {
-    let entry_lab = [LABS_L[i], LABS_A[i], LABS_B[i]];
-    let d2 = delta_e_94_sq(entry_lab, query);
+    let l1 = LABS_L[i];
+    let a1 = LABS_A[i];
+    let b1 = LABS_B[i];
+    let c1 = LABS_C[i]; // pre-computed entry chroma
+    let dl = l1 - query[0];
+    let da = a1 - q_a;
+    let db = b1 - q_b;
+    let dc = c1 - c2;
+    let dh_sq = (da * da + db * db - dc * dc).max(0.0);
+    let sc = 1.0 + 0.045 * c1;
+    let sh = 1.0 + 0.015 * c1;
+    let dl_term = dl;
+    let dc_term = dc / sc;
+    let dh_term_sq = dh_sq / (sh * sh);
+    let d2 = dl_term * dl_term + dc_term * dc_term + dh_term_sq;
     if d2 < best_d2 {
       best_d2 = d2;
       best_idx = i;

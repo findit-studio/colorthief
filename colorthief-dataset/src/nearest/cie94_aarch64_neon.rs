@@ -12,7 +12,7 @@ use core::arch::aarch64::*;
 
 use libm::sqrtf;
 
-use super::{LABS_A, LABS_B, LABS_L};
+use super::{LABS_A, LABS_B, LABS_C, LABS_L};
 
 /// CIE94 nearest-neighbor scan.
 ///
@@ -45,6 +45,9 @@ unsafe fn nearest_idx_neon(query: [f32; 3]) -> usize {
   let l_ptr = LABS_L.as_ptr();
   let a_ptr = LABS_A.as_ptr();
   let b_ptr = LABS_B.as_ptr();
+  // Pre-computed reference chroma C₁ — one `vld1q_f32` per chunk
+  // replaces `vsqrtq_f32(a₁² + b₁²)`.
+  let c_ptr = LABS_C.as_ptr();
 
   for chunk in 0..chunks {
     let i = chunk * 4;
@@ -54,15 +57,12 @@ unsafe fn nearest_idx_neon(query: [f32; 3]) -> usize {
     let l1 = unsafe { vld1q_f32(l_ptr.add(i)) };
     let a1 = unsafe { vld1q_f32(a_ptr.add(i)) };
     let b1 = unsafe { vld1q_f32(b_ptr.add(i)) };
+    let c1 = unsafe { vld1q_f32(c_ptr.add(i)) };
 
     // ΔL, Δa, Δb (reference - sample, matching scalar's `lab_ref - lab_sample`).
     let dl = vsubq_f32(l1, l2);
     let da = vsubq_f32(a1, a2);
     let db = vsubq_f32(b1, b2);
-
-    // Reference chroma C₁ = sqrt(a₁² + b₁²).
-    let c1_sq = vfmaq_f32(vmulq_f32(b1, b1), a1, a1);
-    let c1 = vsqrtq_f32(c1_sq);
 
     // ΔC = C₁ - C₂. ΔH² = max(Δa² + Δb² - ΔC², 0).
     let dc = vsubq_f32(c1, c2_v);
@@ -98,17 +98,18 @@ unsafe fn nearest_idx_neon(query: [f32; 3]) -> usize {
     }
   }
 
-  // Tail: remaining entries past the last full 4-chunk.
+  // Tail: remaining entries past the last full 4-chunk. Use the
+  // pre-computed `LABS_C[i]` to keep parity with the SIMD path.
+  let c2_scalar = sqrtf(query[1] * query[1] + query[2] * query[2]);
   for i in (chunks * 4)..n {
     let l1 = LABS_L[i];
     let a1 = LABS_A[i];
     let b1 = LABS_B[i];
+    let c1 = LABS_C[i];
     let dl = l1 - query[0];
     let da = a1 - query[1];
     let db = b1 - query[2];
-    let c1 = sqrtf(a1 * a1 + b1 * b1);
-    let c2 = sqrtf(query[1] * query[1] + query[2] * query[2]);
-    let dc = c1 - c2;
+    let dc = c1 - c2_scalar;
     let dh_sq = (da * da + db * db - dc * dc).max(0.0);
     let sc = 1.0 + 0.045 * c1;
     let sh = 1.0 + 0.015 * c1;

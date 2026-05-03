@@ -7,7 +7,7 @@ use core::arch::wasm32::*;
 
 use libm::sqrtf;
 
-use super::{LABS_A, LABS_B, LABS_L};
+use super::{LABS_A, LABS_B, LABS_C, LABS_L};
 
 /// CIE94 nearest-neighbor scan (WASM SIMD128).
 pub fn nearest_idx(query: [f32; 3]) -> usize {
@@ -33,6 +33,7 @@ unsafe fn nearest_idx_simd128(query: [f32; 3]) -> usize {
   let l_ptr = LABS_L.as_ptr();
   let a_ptr = LABS_A.as_ptr();
   let b_ptr = LABS_B.as_ptr();
+  let c_ptr = LABS_C.as_ptr();
 
   let zero = f32x4_splat(0.0);
   let one = f32x4_splat(1.0);
@@ -46,13 +47,11 @@ unsafe fn nearest_idx_simd128(query: [f32; 3]) -> usize {
     let l1 = unsafe { v128_load(l_ptr.add(i) as *const v128) };
     let a1 = unsafe { v128_load(a_ptr.add(i) as *const v128) };
     let b1 = unsafe { v128_load(b_ptr.add(i) as *const v128) };
+    let c1 = unsafe { v128_load(c_ptr.add(i) as *const v128) };
 
     let dl = f32x4_sub(l1, l2);
     let da = f32x4_sub(a1, a2);
     let db = f32x4_sub(b1, b2);
-
-    let c1_sq = f32x4_add(f32x4_mul(a1, a1), f32x4_mul(b1, b1));
-    let c1 = f32x4_sqrt(c1_sq);
 
     let dc = f32x4_sub(c1, c2_v);
     let dab_sq = f32x4_add(f32x4_mul(da, da), f32x4_mul(db, db));
@@ -82,16 +81,16 @@ unsafe fn nearest_idx_simd128(query: [f32; 3]) -> usize {
   }
 
   // Tail.
+  let c2_scalar = sqrtf(query[1] * query[1] + query[2] * query[2]);
   for i in (chunks * 4)..n {
     let l1 = LABS_L[i];
     let a1 = LABS_A[i];
     let b1 = LABS_B[i];
+    let c1 = LABS_C[i];
     let dl = l1 - query[0];
     let da = a1 - query[1];
     let db = b1 - query[2];
-    let c1 = sqrtf(a1 * a1 + b1 * b1);
-    let c2 = sqrtf(query[1] * query[1] + query[2] * query[2]);
-    let dc = c1 - c2;
+    let dc = c1 - c2_scalar;
     let dh_sq = (da * da + db * db - dc * dc).max(0.0);
     let sc = 1.0 + 0.045 * c1;
     let sh = 1.0 + 0.015 * c1;

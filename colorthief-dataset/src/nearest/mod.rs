@@ -47,7 +47,7 @@
 
 use crate::{
   Color,
-  generated::{COLORS, LABS_A, LABS_B, LABS_L},
+  generated::{COLORS, LABS_A, LABS_B, LABS_C, LABS_L},
 };
 
 pub(crate) mod scalar;
