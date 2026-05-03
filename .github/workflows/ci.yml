@@ -56,7 +56,11 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Apply clippy lints
-      run: cargo hack clippy --each-feature --exclude-no-default-features
+      # Exclude `xtask` — it's a build-time codegen binary, not a runtime
+      # crate, and doesn't expose the `std`/`alloc`/`lut` features the
+      # other workspace members do (so a powerset that forces those
+      # features would fail with "package does not contain feature").
+      run: cargo hack clippy --each-feature --exclude-no-default-features --exclude xtask
 
   # Run tests on some extra platforms
   cross:
@@ -126,7 +130,8 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Run build
-      run: cargo hack build --each-feature
+      # Exclude `xtask` — see clippy job above for the rationale.
+      run: cargo hack build --each-feature --exclude xtask
 
   test:
     name: test
@@ -162,7 +167,11 @@ jobs:
       # link time. The `cargo hack build` job above still exercises every
       # `--each-feature` combo — including no-std combos — so
       # compile-only coverage isn't lost.
-      run: cargo hack test --each-feature --features std
+      #
+      # `--exclude xtask` because xtask is a build-time codegen binary
+      # that doesn't expose the `std` feature (only `colorthief` and
+      # `colorthief-dataset` do).
+      run: cargo hack test --each-feature --features std --exclude xtask
 
   sanitizer:
     name: sanitizer
