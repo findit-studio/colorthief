@@ -75,7 +75,14 @@ pub(crate) mod ciede2000_lut;
 /// per-arch backends below mirroring Delta E 76.
 pub(crate) mod cie94;
 
-#[cfg(target_arch = "aarch64")]
+// `target_feature = "neon"` (not just `target_arch = "aarch64"`):
+// `aarch64-unknown-none-softfloat` is a Tier-2 target with
+// `target_arch = "aarch64"` but no `target_feature = "neon"`, and
+// calling a `#[target_feature(enable = "neon")]` fn there is UB per
+// the Rust reference. Other aarch64 targets (-linux-gnu, -apple-darwin,
+// -unknown-none, etc.) all have NEON in the default feature set, so
+// this gate excludes only the softfloat variant.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(crate) mod cie94_aarch64_neon;
 
 #[cfg(target_arch = "x86_64")]
@@ -90,7 +97,9 @@ pub(crate) mod cie94_x86_avx512;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub(crate) mod cie94_wasm_simd128;
 
-#[cfg(target_arch = "aarch64")]
+// See the comment on `cie94_aarch64_neon` above for why we gate on
+// `target_feature = "neon"` rather than just `target_arch = "aarch64"`.
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 pub(crate) mod aarch64_neon;
 
 #[cfg(target_arch = "x86_64")]
@@ -143,9 +152,18 @@ pub(crate) mod wasm_simd128;
 #[allow(unreachable_code)]
 #[inline]
 pub(crate) fn nearest_idx(query: [f32; 3]) -> usize {
-  // Tier 1: aarch64 NEON. NEON is mandatory in Armv8-A so no runtime
-  // feature detection is needed; compile-time cfg is sufficient.
-  #[cfg(all(target_arch = "aarch64", not(colorthief_force_scalar)))]
+  // Tier 1: aarch64 NEON. NEON is part of the default feature set on
+  // every aarch64 target Rust supports *except*
+  // `aarch64-unknown-none-softfloat` (Tier 2, soft-float embedded). We
+  // gate on `target_feature = "neon"` rather than just `target_arch`
+  // so the softfloat target falls through to scalar — calling a
+  // `#[target_feature(enable = "neon")]` fn without the feature in
+  // scope is UB per the Rust reference.
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    not(colorthief_force_scalar)
+  ))]
   {
     return aarch64_neon::nearest_idx(query);
   }
@@ -231,8 +249,13 @@ pub(crate) fn nearest_ciede2000(rgb: [u8; 3]) -> &'static Color {
 #[allow(unreachable_code)]
 #[inline]
 pub(crate) fn nearest_cie94(query: [f32; 3]) -> &'static Color {
-  // Tier 1: aarch64 NEON.
-  #[cfg(all(target_arch = "aarch64", not(colorthief_force_scalar)))]
+  // Tier 1: aarch64 NEON. See `nearest_idx` above for why we gate on
+  // `target_feature = "neon"` rather than just `target_arch`.
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    not(colorthief_force_scalar)
+  ))]
   {
     return COLORS[cie94_aarch64_neon::nearest_idx(query)];
   }
@@ -317,7 +340,7 @@ mod tests {
   /// the test harness; under `--no-default-features --features alloc`
   /// the test is skipped (the standard test runner requires std).
   #[test]
-  #[cfg(all(target_arch = "aarch64", feature = "std"))]
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon", feature = "std"))]
   fn neon_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
     for rgb in parity_grid() {
@@ -445,7 +468,7 @@ mod tests {
 
   /// CIE94 aarch64 NEON ↔ scalar.
   #[test]
-  #[cfg(all(target_arch = "aarch64", feature = "std"))]
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon", feature = "std"))]
   fn cie94_neon_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
     for rgb in parity_grid() {

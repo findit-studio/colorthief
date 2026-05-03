@@ -28,14 +28,13 @@ std = ["alloc", "colorthief-dataset/std", "thiserror/std"]
 # `alloc` enables the heap-allocator-backed convenience surface:
 # `extract`/`extract_with` returning `Vec<Dominant>`, `Mmcq::new_boxed()`,
 # and the `impl Buffer<T> for Vec<T>`. Without `std`, MMCQ allocates
-# a fresh `Box<Mmcq>` per call (no caching).
+# a fresh `Box<Mmcq>` per call (no caching). For zero-alloc-per-call
+# in single-threaded `no_std + alloc` environments (typical
+# wasm32-unknown-unknown / interrupt-free bare metal), users should
+# place an `Mmcq` in `static mut` themselves and call
+# `Mmcq::extract` directly — the `unsafe` then lives at their call
+# site instead of being silently smuggled in by a feature flag.
 alloc = []
-
-# `single-threaded` provides a `OnceCell`-cached static `Mmcq` for
-# `no_std + alloc` callers who can guarantee single-threaded access
-# (typical wasm32-unknown-unknown, interrupt-free bare metal). The
-# cell is wrapped in an `unsafe impl Sync` shim — opt-in only.
-single-threaded = ["alloc"]
 
 # Pre-computed 32³ candidate-set LUT for CIEDE2000 (the default
 # `Algorithm`). Trades ~256-500 KB of static binary for ~2400× faster

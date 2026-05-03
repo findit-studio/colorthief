@@ -37,7 +37,17 @@
 #[allow(unsafe_code)]
 #[inline]
 pub(crate) fn sum_u32_slice(slice: &[u32]) -> u32 {
-  #[cfg(all(target_arch = "aarch64", not(colorthief_force_scalar)))]
+  // `target_feature = "neon"` (not just `target_arch = "aarch64"`):
+  // `aarch64-unknown-none-softfloat` is a Tier-2 target with
+  // `target_arch = "aarch64"` but no `target_feature = "neon"`, and
+  // calling `#[target_feature(enable = "neon")]` fns there is UB. The
+  // softfloat target falls through to scalar via this gate; every
+  // other aarch64 target Rust supports has NEON in the default set.
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    not(colorthief_force_scalar)
+  ))]
   {
     return aarch64_neon::sum_u32_slice(slice);
   }
@@ -91,7 +101,7 @@ pub(crate) mod scalar {
 // `colorthief-dataset/src/nearest/scalar.rs` uses for the inverse
 // case (scalar dead under natural-build aarch64). Outer attribute
 // (not inner) to satisfy clippy's `mixed_attributes_style` lint.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 #[allow(unsafe_code, dead_code)]
 pub(crate) mod aarch64_neon {
   use core::arch::aarch64::*;
@@ -291,7 +301,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "aarch64")]
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   fn neon_matches_scalar() {
     for input in parity_inputs() {
       let s = scalar::sum_u32_slice(&input);

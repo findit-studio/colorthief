@@ -21,8 +21,7 @@ against the [xkcd color hierarchy].
 | Feature | Description |
 |---|---|
 | `std` (default) | `thread_local!`-cached MMCQ workspace — zero-alloc-per-call after the first call per thread. Implies `alloc`. |
-| `alloc` | Heap allocator available; enables `Vec<Dominant>`-returning convenience APIs and `Mmcq::new_boxed()`. |
-| `single-threaded` | `OnceCell + AssumeSync`-cached static workspace for `no_std + alloc` consumers who can guarantee single-threaded access (typical wasm32-unknown-unknown / interrupt-free bare metal). Opt-in only. |
+| `alloc` | Heap allocator available; enables `Vec<Dominant>`-returning convenience APIs and `Mmcq::new_boxed()`. Without `std`, every `extract*` call allocates a fresh workspace; for zero-alloc-per-call use the `Mmcq::extract` pattern below. |
 | `lut` (default) | 32³ candidate-set LUT for CIEDE2000 — ~256 KB binary cost for ~300× speedup vs full scan. |
 
 ## No-std support

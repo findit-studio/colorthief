@@ -20,7 +20,11 @@ use super::{LABS_A, LABS_B, LABS_C, LABS_L};
 /// S_C / S_H factors) and the query as the sample — same convention
 /// as the scalar [`super::cie94::nearest_idx`].
 pub fn nearest_idx(query: [f32; 3]) -> usize {
-  // SAFETY: NEON is mandatory on aarch64.
+  // SAFETY: this module is only compiled under
+  // `cfg(target_feature = "neon")` (see `super` mod decl), so calling
+  // a `#[target_feature(enable = "neon")]` fn is sound.
+  // `aarch64-unknown-none-softfloat` falls through to scalar instead
+  // of compiling this path.
   unsafe { nearest_idx_neon(query) }
 }
 

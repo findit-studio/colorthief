@@ -1,8 +1,12 @@
 //! Aarch64 NEON backend — 4 entries/iter via 128-bit `vld1q_f32`
 //! loads against the SoA `LABS_*` arrays.
 //!
-//! Compile-time gated to `target_arch = "aarch64"`. NEON is mandatory
-//! in Armv8-A so no runtime feature detection is needed.
+//! Compile-time gated to
+//! `cfg(all(target_arch = "aarch64", target_feature = "neon"))`. NEON
+//! is in the default feature set on every aarch64 target Rust
+//! supports *except* `aarch64-unknown-none-softfloat` (Tier 2,
+//! soft-float embedded), which is excluded by the gate. No runtime
+//! detection is needed — the gate is the safety boundary.
 
 #![allow(unsafe_code)]
 
@@ -10,14 +14,16 @@ use core::arch::aarch64::*;
 
 use super::{LABS_A, LABS_B, LABS_L};
 
-/// NEON entry. Static target gating means NEON is always available
-/// here. The `unsafe` block delegates to the
-/// `#[target_feature(enable = "neon")]` worker; the safety
-/// requirement (NEON available at runtime) is satisfied by the
-/// architectural mandate.
+/// NEON entry. The module-level `cfg(target_feature = "neon")` gate
+/// guarantees NEON is enabled in this compilation unit, satisfying
+/// the safety precondition of the
+/// `#[target_feature(enable = "neon")]` worker.
 pub fn nearest_idx(query: [f32; 3]) -> usize {
-  // SAFETY: `target_arch = "aarch64"` implies Armv8-A, where NEON is
-  // mandatory; there is no aarch64 build target without NEON.
+  // SAFETY: this module is only compiled when
+  // `cfg(target_feature = "neon")`, so calling a `target_feature(neon)`
+  // fn is sound. `aarch64-unknown-none-softfloat` (the only aarch64
+  // target without NEON in its default feature set) compiles the
+  // scalar fallback in the dispatcher instead of this module.
   unsafe { nearest_idx_neon(query) }
 }
 

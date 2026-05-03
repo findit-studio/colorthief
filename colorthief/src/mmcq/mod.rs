@@ -696,22 +696,30 @@ impl Mmcq {
 // =====================================================================
 // alloc-tier convenience wrapper (used by lib.rs's `extract*`).
 //
-// Three impls of `quantize` are defined below, mutually-exclusive on
-// feature flags so callers always see one signature:
+// Two impls of `quantize` are defined below, mutually-exclusive on
+// the `std` feature so callers always see one signature:
 //
 //   1. `feature = "std"`: thread_local!-cached `Box<Mmcq>` — one
 //      ~134 KB allocation per OS thread for the program's lifetime;
-//      zero per-call.
-//   2. `feature = "single-threaded"` (no_std + alloc): `OnceCell`-
-//      cached static `Box<Mmcq>` wrapped in an `AssumeSync` shim
-//      whose `unsafe impl Sync` is justified by the user opting in
-//      to the `single-threaded` feature flag (typical
-//      wasm32-unknown-unknown / interrupt-free bare metal). Zero
-//      per-call after first.
-//   3. `feature = "alloc"` (no std, no single-threaded): per-call
-//      `Mmcq::new_boxed()`. ~134 KB heap alloc per call. Acceptable
-//      when alloc is available but the threading model is unknown
-//      (RTOS multi-task, etc.) and the call rate is low.
+//      zero per-call. Per-thread isolation makes this sound under
+//      any threading model.
+//   2. `feature = "alloc"` (no `std`): per-call `Mmcq::new_boxed()`.
+//      ~134 KB heap alloc per call. Stateless, sound under any
+//      threading model.
+//
+// A previous design exposed a `single-threaded` feature that wrapped
+// a `OnceCell<RefCell<Box<Mmcq>>>` in an `unsafe impl Sync` shim, on
+// the assumption that flipping the feature flag was the user's
+// promise of single-threaded access. Codex adversarial review caught
+// this as a soundness hole: Cargo features are global build-time
+// configuration, not per-call invariants, so a multi-threaded RTOS
+// build with `single-threaded` enabled (intentionally or
+// transitively) hit data-race UB through fully-safe `extract` calls.
+// The feature was removed; users in genuinely-single-threaded
+// `no_std + alloc` environments who want a cached workspace should
+// place an `Mmcq` in their own `static mut` and call `Mmcq::extract`
+// directly — the `unsafe` then sits at their call site, not silently
+// inside this crate.
 // =====================================================================
 
 // --- Tier 1: std (thread_local-cached) ------------------------------
@@ -738,52 +746,8 @@ pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
   })
 }
 
-// --- Tier 2: single-threaded (no_std + alloc, OnceCell-cached) ------
-#[cfg(all(feature = "single-threaded", not(feature = "std")))]
-mod single_threaded_cache {
-  use core::cell::{OnceCell, RefCell};
-
-  use std::boxed::Box;
-
-  use super::Mmcq;
-
-  /// Wrapper that asserts `Sync` on its inner type. The
-  /// `single-threaded` feature flag is the user's promise that there
-  /// is no concurrent access (typical wasm32-unknown-unknown,
-  /// interrupt-free bare metal). Without this assertion the compiler
-  /// rejects `static MMCQ: OnceCell<RefCell<Box<Mmcq>>>` because
-  /// `RefCell` is `!Sync`.
-  pub(crate) struct AssumeSync<T>(pub OnceCell<T>);
-
-  // SAFETY: documented above; gated on the `single-threaded` feature
-  // flag, which is opt-in.
-  #[allow(unsafe_code)]
-  unsafe impl<T> Sync for AssumeSync<T> {}
-
-  pub(crate) static MMCQ_CELL: AssumeSync<RefCell<Box<Mmcq>>> = AssumeSync(OnceCell::new());
-}
-
-#[cfg(all(feature = "single-threaded", not(feature = "std")))]
-pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
-  pixels: I,
-  count: u8,
-  algo: crate::Algorithm,
-) -> std::vec::Vec<crate::Dominant> {
-  let cell = single_threaded_cache::MMCQ_CELL
-    .0
-    .get_or_init(|| core::cell::RefCell::new(Mmcq::new_boxed()));
-  let mut mmcq = cell.borrow_mut();
-  let mut out: std::vec::Vec<crate::Dominant> = std::vec::Vec::new();
-  mmcq.extract(pixels, count, algo, &mut out);
-  out
-}
-
-// --- Tier 3: alloc-only (per-call) ----------------------------------
-#[cfg(all(
-  feature = "alloc",
-  not(feature = "std"),
-  not(feature = "single-threaded")
-))]
+// --- Tier 2: alloc-only (per-call) ----------------------------------
+#[cfg(all(feature = "alloc", not(feature = "std")))]
 pub(crate) fn quantize<I: Iterator<Item = [u8; 3]>>(
   pixels: I,
   count: u8,

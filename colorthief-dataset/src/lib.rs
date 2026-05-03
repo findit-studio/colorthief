@@ -66,7 +66,10 @@ pub mod __bench {
   #[cfg(feature = "lut")]
   pub use crate::nearest::ciede2000_lut::nearest_idx as ciede2000_lut_nearest_idx;
 
-  #[cfg(target_arch = "aarch64")]
+  // `target_feature = "neon"` (not just `target_arch = "aarch64"`):
+  // see `nearest::aarch64_neon` mod decl for the
+  // `aarch64-unknown-none-softfloat` rationale.
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   pub use crate::nearest::cie94_aarch64_neon::nearest_idx as cie94_aarch64_neon_nearest_idx;
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   pub use crate::nearest::cie94_wasm_simd128::nearest_idx as cie94_wasm_simd128_nearest_idx;
@@ -77,7 +80,7 @@ pub mod __bench {
   #[cfg(target_arch = "x86_64")]
   pub use crate::nearest::cie94_x86_sse41::nearest_idx as cie94_x86_sse41_nearest_idx;
 
-  #[cfg(target_arch = "aarch64")]
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
   pub use crate::nearest::aarch64_neon::nearest_idx as aarch64_neon_nearest_idx;
 
   // x86 backends are `unsafe fn` (the `#[target_feature]` attribute
