@@ -34,6 +34,23 @@ fn lab_query_grid() -> Vec<[f32; 3]> {
   out
 }
 
+/// Same 16³ grid but pre-paired with the originating u8 RGB. Used by
+/// the LUT bench arm, which needs both the RGB (for cell lookup) and
+/// the LAB (for the candidate scan's distance metric).
+#[cfg(feature = "lut")]
+fn rgb_lab_pair_grid() -> Vec<([u8; 3], [f32; 3])> {
+  let mut out = Vec::with_capacity(4096);
+  for r in (0..256).step_by(16) {
+    for g in (0..256).step_by(16) {
+      for b in (0..256).step_by(16) {
+        let rgb = [r as u8, g as u8, b as u8];
+        out.push((rgb, __bench::rgb_to_lab(rgb)));
+      }
+    }
+  }
+  out
+}
+
 fn bench_nearest_idx(c: &mut Criterion) {
   let queries = lab_query_grid();
   let mut group = c.benchmark_group("nearest_idx");
@@ -64,9 +81,12 @@ fn bench_nearest_idx(c: &mut Criterion) {
 
   // CIEDE2000 with Delta E 76 prefilter. Hierarchical: scan all 949
   // entries with the cheap squared-Euclidean LAB metric, keep the
-  // top-K (K=96, validated for zero divergences on the 17³ grid),
-  // re-rank with full CIEDE2000. Empirically equivalent to the
-  // full-scan reference on every grid query.
+  // top-K (K=96), re-rank with full CIEDE2000. Empirically
+  // equivalent on the 17³ grid but **not** at 256³ (2283 divergences
+  // out of 16.8M queries — see
+  // `tests/parity_exhaustive.rs`). Retained as a benchmark baseline;
+  // production CIEDE2000 paths now use the LUT (when on) or the
+  // full-scan reference (when off).
   group.bench_function("ciede2000_prefiltered", |b| {
     let mut iter = queries.iter().cycle();
     b.iter(|| {
@@ -74,6 +94,25 @@ fn bench_nearest_idx(c: &mut Criterion) {
       black_box(__bench::ciede2000_prefiltered_nearest_idx(black_box(q)))
     })
   });
+
+  // CIEDE2000 candidate-set LUT — the production fast path when
+  // `feature = "lut"` is enabled (default). O(1) cell lookup → exact
+  // scan over the cell's small candidate set (avg 2.5, max 10 in the
+  // current palette). Provably exact at u8 RGB resolution.
+  #[cfg(feature = "lut")]
+  {
+    let pairs = rgb_lab_pair_grid();
+    group.bench_function("ciede2000_lut", |b| {
+      let mut iter = pairs.iter().cycle();
+      b.iter(|| {
+        let &(rgb, lab) = iter.next().unwrap();
+        black_box(__bench::ciede2000_lut_nearest_idx(
+          black_box(rgb),
+          black_box(lab),
+        ))
+      })
+    });
+  }
 
   // CIE94 scalar reference.
   group.bench_function("cie94_scalar", |b| {

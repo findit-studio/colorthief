@@ -9,8 +9,19 @@ homepage.workspace = true
 rust-version = "1.95.0"
 
 [dependencies]
-colorthief-dataset = { workspace = true }
+# Workspace dep already declares `default-features = false`, so we
+# explicitly enable `std` (always required by colorthief itself).
+# The `lut` feature flows through the [features] section below.
+colorthief-dataset = { workspace = true, features = ["std"] }
 thiserror          = { workspace = true, features = ["default"] }
+
+[features]
+default = ["lut"]
+# Pre-computed 32³ candidate-set LUT for CIEDE2000 (the default
+# `Algorithm`). Trades ~256-500 KB of static binary for ~2400× faster
+# CIEDE2000 lookups (71.5 µs → ~30 ns). Disable via
+# `default-features = false` on size-sensitive targets.
+lut = ["colorthief-dataset/lut"]
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["html_reports"] }

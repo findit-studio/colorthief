@@ -14,12 +14,22 @@ categories = ["data-structures", "no-std", "no-std::no-alloc"]
 rust-version = "1.95.0"
 
 [features]
-default = ["std"]
+default = ["std", "lut"]
 # Forward-compat hook — `colorthief-dataset` does not allocate today, but
 # downstream consumers can already opt into the `alloc` feature so that
 # adding alloc-using helpers later is a non-breaking change.
 alloc = []
 std = []
+# 32³ candidate-set lookup table for CIEDE2000. Pre-computed at xtask
+# codegen time: each LUT cell stores the small set of palette indices
+# that are CIEDE2000-nearest at *some* RGB inside the cell's 8×8×8
+# bounding box. Runtime: O(1) cell lookup → exact scan over a handful
+# of candidates ≈ 30 ns/query. Provably exact at u8 RGB resolution
+# (every reachable u8 RGB is sampled at codegen time). Trades ~256-
+# 500 KB of static binary for ~2400× speedup on `Algorithm::Ciede2000Exact`
+# (the default). Disable on size-constrained targets (wasm, embedded)
+# via `default-features = false`.
+lut = []
 
 [dependencies]
 # `core` has no transcendental math (no `powf`, no `cbrtf`); the sRGB→LAB

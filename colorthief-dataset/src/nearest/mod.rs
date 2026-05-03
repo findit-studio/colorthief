@@ -59,6 +59,17 @@ pub(crate) mod scalar;
 /// can't usefully parallelise, so we keep the scalar path.
 pub(crate) mod ciede2000;
 
+/// CIEDE2000 candidate-set LUT — gated on `feature = "lut"` (default
+/// on). The LUT is pre-computed at xtask codegen time: each of the
+/// 32³ cells stores the small set of palette indices that are the
+/// CIEDE2000-nearest at *some* RGB inside the cell's 8×8×8 box. At
+/// runtime, the cell lookup is O(1) and the candidate scan is bounded
+/// by the per-cell max (10 in the current palette), which collapses
+/// the per-query CIEDE2000 cost from ~71 µs (full scan over 949) to a
+/// few hundred ns. Provably exact at u8 RGB resolution.
+#[cfg(feature = "lut")]
+pub(crate) mod ciede2000_lut;
+
 /// CIE94 (Delta E 94) — scalar reference. The SIMD-friendly formula
 /// (no `atan2` / `sin` / `cos` / `exp`; only `sqrt` + arithmetic) has
 /// per-arch backends below mirroring Delta E 76.
@@ -183,30 +194,33 @@ pub(crate) fn nearest(query: [f32; 3]) -> &'static Color {
   COLORS[nearest_idx(query)]
 }
 
-/// CIEDE2000 nearest-neighbor convenience wrapper used by
-/// [`crate::Color::nearest_to_ciede2000_exact`]. Full-scan reference
-/// implementation — always scalar; CIEDE2000's `atan2` / `sin` /
-/// `exp` / branchy hue wraparound don't vectorise usefully on any of
-/// our SIMD backends.
+/// CIEDE2000 nearest-neighbor — the dispatcher behind both
+/// [`crate::Color::nearest_to_ciede2000`] and
+/// [`crate::Color::nearest_to_ciede2000_exact`].
+///
+/// When `feature = "lut"` is enabled (the default), routes through
+/// the candidate-set LUT in [`ciede2000_lut`] — provably exact at u8
+/// RGB resolution, ~few-hundred-ns/query. When the feature is
+/// disabled, falls through to the full-scan reference
+/// [`ciede2000::nearest_idx`] (~71 µs/query, also provably exact).
+///
+/// The Delta E 76 prefilter at `K = 96` is **not** used as a
+/// production path: a 256³ exhaustive sweep
+/// (`tests/parity_exhaustive.rs::parity_ciede2000_prefilter_vs_exact_256_grid`)
+/// showed 2283 divergences vs. full-scan, so the prefilter can't
+/// claim strict exactness. It's retained as a benchmark baseline only.
+#[cfg(feature = "lut")]
 #[inline]
-pub(crate) fn nearest_ciede2000(query: [f32; 3]) -> &'static Color {
-  COLORS[ciede2000::nearest_idx(query)]
+pub(crate) fn nearest_ciede2000(rgb: [u8; 3]) -> &'static Color {
+  let query = crate::rgb_to_lab(rgb);
+  COLORS[ciede2000_lut::nearest_idx(rgb, query)]
 }
 
-/// CIEDE2000 nearest-neighbor with a Delta E 76 prefilter — the
-/// default behind [`crate::Color::nearest_to_ciede2000`]. Stage 1
-/// scans every entry under the cheap Delta E 76 metric, keeps the
-/// top-K (K = [`ciede2000::PREFILTER_K`]) candidates; stage 2
-/// re-ranks those K with the full CIEDE2000 formula.
-///
-/// ~5× faster than [`nearest_ciede2000`] on Apple Silicon and
-/// validated to agree with it on the 17³ RGB grid at K = 96 (zero
-/// divergences). For inputs outside the validation grid where strict
-/// full-scan semantics are required, callers reach for
-/// [`crate::Color::nearest_to_ciede2000_exact`].
+#[cfg(not(feature = "lut"))]
 #[inline]
-pub(crate) fn nearest_ciede2000_prefiltered(query: [f32; 3]) -> &'static Color {
-  COLORS[ciede2000::nearest_idx_prefiltered(query)]
+pub(crate) fn nearest_ciede2000(rgb: [u8; 3]) -> &'static Color {
+  let query = crate::rgb_to_lab(rgb);
+  COLORS[ciede2000::nearest_idx(query)]
 }
 
 /// CIE94 (Delta E 94) nearest-neighbor with the same SIMD dispatch

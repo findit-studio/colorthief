@@ -279,29 +279,44 @@ fn parity_cie94_wasm_simd128_vs_scalar_256_grid() {
 }
 
 // =====================================================================
-// CIEDE2000 prefilter ↔ exact full-scan
+// CIEDE2000 LUT ↔ full-scan
 // =====================================================================
 
-/// CIEDE2000 prefilter (K=96) ↔ exact full-scan across all 16,777,216
-/// u8 RGB inputs. The 17³ inline test only checks 4913 queries; this
-/// is the airtight version that proves K=96 is bit-equivalent across
-/// every reachable u8 RGB palette query.
+/// Candidate-set LUT ↔ exact full-scan across all 16,777,216 u8 RGB
+/// inputs. The LUT is built at codegen time by sampling every RGB in
+/// each cell and unioning the full-scan winners, so this test should
+/// pass by construction — any failure indicates a bug in the LUT
+/// runtime lookup (cell-id math, slice bounds, scan formula) or a
+/// drift between xtask's CIEDE2000 (used for codegen) and the
+/// crate's runtime CIEDE2000 (used here for full-scan).
 ///
-/// Slow: ~25 min on Apple Silicon in release mode (each query runs
-/// both metrics, ≈ 92 µs combined). Run nightly in CI rather than on
-/// every PR.
+/// Combined per-query runtime: LUT lookup (~few-hundred ns) + full-
+/// scan (~71 µs) ≈ 72 µs each. Total ~20 min release. Run nightly
+/// alongside the SIMD parity sweeps.
+///
+/// **Note on the previous prefilter test.** This file used to also
+/// run `parity_ciede2000_prefilter_vs_exact_256_grid`. That test
+/// found 2283 divergences across 16.8M queries at K=96 — the
+/// prefilter is *empirically equivalent on the 17³ subgrid* but not
+/// across the full RGB cube. The prefilter is no longer used as a
+/// production path (the LUT supersedes it; see
+/// `src/nearest/mod.rs::nearest_ciede2000`), so the test was removed
+/// once the LUT became the production fast path. The
+/// `nearest_idx_prefiltered` function itself is retained as a
+/// benchmark baseline.
 #[test]
-#[ignore = "256³ × ~92µs/query ≈ 25 min release; run nightly"]
-fn parity_ciede2000_prefilter_vs_exact_256_grid() {
+#[ignore = "256³ × ~72µs/query ≈ 20 min release; run nightly"]
+#[cfg(feature = "lut")]
+fn parity_lut_vs_full_scan_ciede2000_256_grid() {
   let mut count = 0u32;
   for rgb in rgb_iter() {
     let q = rgb_to_lab(rgb);
     let exact = ciede2000_nearest_idx(q);
-    let prefilter = ciede2000_prefiltered_nearest_idx(q);
-    if exact != prefilter {
+    let lut = ciede2000_lut_nearest_idx(rgb, q);
+    if exact != lut {
       count += 1;
       if count <= 5 {
-        eprintln!("rgb={rgb:?} exact={exact} prefilter={prefilter}");
+        eprintln!("rgb={rgb:?} exact={exact} lut={lut}");
       }
     }
   }

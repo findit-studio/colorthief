@@ -63,6 +63,9 @@ pub mod __bench {
     scalar::{delta_e_76_sq, nearest_idx as scalar_nearest_idx},
   };
 
+  #[cfg(feature = "lut")]
+  pub use crate::nearest::ciede2000_lut::nearest_idx as ciede2000_lut_nearest_idx;
+
   #[cfg(target_arch = "aarch64")]
   pub use crate::nearest::cie94_aarch64_neon::nearest_idx as cie94_aarch64_neon_nearest_idx;
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -254,31 +257,30 @@ impl Color {
   /// blue region) at the cost of `atan2` / `sin` / `cos` / `exp` per
   /// pair plus branchy hue-wraparound logic.
   ///
-  /// **Implementation: hierarchical prefilter.** Stage 1 scans every
-  /// palette entry under Delta E 76 (squared Euclidean LAB) and keeps
-  /// the top K = [`crate::nearest::ciede2000::PREFILTER_K`]
-  /// candidates. Stage 2 re-ranks those K with the full CIEDE2000
-  /// formula. ~5× faster than the full scan and **empirically
-  /// equivalent** to it on the 17³ RGB validation grid (zero
-  /// divergences at the chosen K). For strict full-scan semantics on
-  /// inputs outside the validation grid, use
-  /// [`Self::nearest_to_ciede2000_exact`].
+  /// # Implementation
   ///
-  /// Scalar-only — see [`crate::nearest::ciede2000`] for why the
-  /// re-rank stage doesn't benefit from SIMD even with the
-  /// prefilter.
+  /// - With `feature = "lut"` (the default): O(1) cell lookup → small
+  ///   candidate scan via the pre-computed candidate-set LUT
+  ///   ([`crate::nearest::ciede2000_lut`]). Provably exact at u8 RGB
+  ///   resolution; ~few-hundred-ns/query.
+  /// - Without `feature = "lut"`: full-scan reference over all 949
+  ///   palette entries (~71 µs/query). Same correctness guarantee,
+  ///   slower.
+  ///
+  /// Both modes are scalar — CIEDE2000's transcendentals don't
+  /// vectorise usefully (see [`crate::nearest::ciede2000`]).
   pub fn nearest_to_ciede2000(rgb: [u8; 3]) -> &'static Color {
-    crate::nearest::nearest_ciede2000_prefiltered(rgb_to_lab(rgb))
+    crate::nearest::nearest_ciede2000(rgb)
   }
 
-  /// Strict full-scan CIEDE2000 — evaluates the formula against every
-  /// palette entry. Slower (~5×) than the prefiltered default
-  /// [`Self::nearest_to_ciede2000`]; reach for this only if you've
-  /// measured the prefilter diverging on your real inputs (the
-  /// prefilter has zero divergences across the 17³ RGB validation
-  /// grid but isn't proven across every 8-bit input).
+  /// Strict CIEDE2000 nearest-neighbor. Behaviorally equivalent to
+  /// [`Self::nearest_to_ciede2000`] — both are exact under both
+  /// feature configurations (the LUT path is provably exact, the
+  /// no-LUT path is full-scan). Retained as a distinct entry point
+  /// for API stability; consumers picking between the two by name
+  /// should prefer [`Self::nearest_to_ciede2000`].
   pub fn nearest_to_ciede2000_exact(rgb: [u8; 3]) -> &'static Color {
-    crate::nearest::nearest_ciede2000(rgb_to_lab(rgb))
+    crate::nearest::nearest_ciede2000(rgb)
   }
 
   /// Find the entry whose pre-computed LAB is closest to the given
@@ -327,22 +329,21 @@ pub enum Algorithm {
   /// reference, the query is the sample.
   Cie94,
 
-  /// **CIEDE2000** with Delta E 76 prefilter (K=96). The modern
-  /// perceptual gold-standard formula at ~5× the cost of the full-
-  /// scan reference. Empirically equivalent to the full scan on the
-  /// 17³ RGB validation grid (zero divergences). Scalar-only
-  /// re-rank stage; the K-candidate prefilter is the existing SIMD
-  /// Delta E 76 scan.
+  /// **CIEDE2000** — the modern perceptual gold-standard formula.
+  /// With `feature = "lut"` (the default) routes through the
+  /// candidate-set LUT (~230 ns/query, provably exact at u8 RGB);
+  /// without the feature falls back to the full-scan reference
+  /// (~71 µs/query, also provably exact). Behaviorally equivalent
+  /// to [`Self::Ciede2000Exact`] under both feature configurations.
   Ciede2000,
 
-  /// **Strict full-scan CIEDE2000** — the modern perceptual gold-
-  /// standard, no prefilter. Returned by [`Algorithm::default`] so
-  /// consumers of [`Algorithm::extract`] and crate-level entry points
-  /// like `colorthief::extract` get the most accurate naming out of
-  /// the box. ~5× slower than [`Self::Ciede2000`] (no prefilter
-  /// shortcut) and ~150× slower than [`Self::DeltaE76`]; throughput-
-  /// sensitive callers should pick a faster variant explicitly.
-  /// **Default.**
+  /// **CIEDE2000**, retained as a distinct variant for API
+  /// stability. Behaviorally equivalent to [`Self::Ciede2000`] —
+  /// both go through the LUT when `feature = "lut"` is enabled and
+  /// the full-scan reference otherwise. **Default.** Returned by
+  /// [`Algorithm::default`] so consumers of [`Algorithm::extract`]
+  /// and crate-level entry points like `colorthief::extract` get
+  /// the perceptual gold-standard out of the box.
   #[default]
   Ciede2000Exact,
 }
