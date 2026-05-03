@@ -53,8 +53,16 @@ use crate::{
 pub(crate) mod scalar;
 
 /// CIEDE2000 — scalar-only on every target. See [`ciede2000`] for why
-/// SIMD isn't worth pursuing here.
+/// SIMD isn't worth pursuing here. A NEON attempt was benchmarked
+/// against the scalar baseline on 2026-05-03 and regressed by ~35%
+/// (115.9 µs vs 85.9 µs / query) — the transcendental-heavy formula
+/// can't usefully parallelise, so we keep the scalar path.
 pub(crate) mod ciede2000;
+
+/// CIE94 (Delta E 94) — scalar implementation. SIMD-friendly (no
+/// `atan2`, `sin`, `cos`, `exp`); SIMD backends to be added in
+/// follow-up work.
+pub(crate) mod cie94;
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64_neon;
@@ -149,12 +157,38 @@ pub(crate) fn nearest(query: [f32; 3]) -> &'static Color {
 }
 
 /// CIEDE2000 nearest-neighbor convenience wrapper used by
-/// [`crate::Color::nearest_to_ciede2000`]. Always scalar; CIEDE2000's
-/// `atan2` / `sin` / `exp` / branchy hue wraparound don't vectorise
-/// usefully on any of our SIMD backends.
+/// [`crate::Color::nearest_to_ciede2000_exact`]. Full-scan reference
+/// implementation — always scalar; CIEDE2000's `atan2` / `sin` /
+/// `exp` / branchy hue wraparound don't vectorise usefully on any of
+/// our SIMD backends.
 #[inline]
 pub(crate) fn nearest_ciede2000(query: [f32; 3]) -> &'static Color {
   COLORS[ciede2000::nearest_idx(query)]
+}
+
+/// CIEDE2000 nearest-neighbor with a Delta E 76 prefilter — the
+/// default behind [`crate::Color::nearest_to_ciede2000`]. Stage 1
+/// scans every entry under the cheap Delta E 76 metric, keeps the
+/// top-K (K = [`ciede2000::PREFILTER_K`]) candidates; stage 2
+/// re-ranks those K with the full CIEDE2000 formula.
+///
+/// ~5× faster than [`nearest_ciede2000`] on Apple Silicon and
+/// validated to agree with it on the 17³ RGB grid at K = 96 (zero
+/// divergences). For inputs outside the validation grid where strict
+/// full-scan semantics are required, callers reach for
+/// [`crate::Color::nearest_to_ciede2000_exact`].
+#[inline]
+pub(crate) fn nearest_ciede2000_prefiltered(query: [f32; 3]) -> &'static Color {
+  COLORS[ciede2000::nearest_idx_prefiltered(query)]
+}
+
+/// CIE94 (Delta E 94) nearest-neighbor convenience wrapper used by
+/// [`crate::Color::nearest_to_cie94`]. Currently scalar-only; SIMD
+/// backends would mirror the Delta E 76 module structure since the
+/// formula has no transcendentals beyond `sqrt`.
+#[inline]
+pub(crate) fn nearest_cie94(query: [f32; 3]) -> &'static Color {
+  COLORS[cie94::nearest_idx(query)]
 }
 
 #[cfg(test)]

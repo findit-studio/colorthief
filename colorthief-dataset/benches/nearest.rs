@@ -51,8 +51,8 @@ fn bench_nearest_idx(c: &mut Criterion) {
   });
 
   // CIEDE2000 scalar — the perceptual gold-standard distance metric.
-  // Scalar-only by design (atan2 / sin / cos / exp don't vectorise
-  // cleanly). Bench expectation: ~5–10× slower than the Delta E 76
+  // Scalar-only public path (atan2 / sin / cos / exp don't vectorise
+  // cleanly). Bench expectation: ~50–100× slower than the Delta E 76
   // scalar baseline per the formula's transcendental count.
   group.bench_function("ciede2000_scalar", |b| {
     let mut iter = queries.iter().cycle();
@@ -61,6 +61,39 @@ fn bench_nearest_idx(c: &mut Criterion) {
       black_box(__bench::ciede2000_nearest_idx(black_box(q)))
     })
   });
+
+  // CIEDE2000 with Delta E 76 prefilter. Hierarchical: scan all 949
+  // entries with the cheap squared-Euclidean LAB metric, keep the
+  // top-K (K=96, validated for zero divergences on the 17³ grid),
+  // re-rank with full CIEDE2000. Empirically equivalent to the
+  // full-scan reference on every grid query.
+  group.bench_function("ciede2000_prefiltered", |b| {
+    let mut iter = queries.iter().cycle();
+    b.iter(|| {
+      let q = *iter.next().unwrap();
+      black_box(__bench::ciede2000_prefiltered_nearest_idx(black_box(q)))
+    })
+  });
+
+  // CIE94 (Delta E 94) — the middle-ground perceptual metric. Like
+  // Delta E 76 it has no transcendentals beyond sqrt, so future SIMD
+  // backends would mirror the Delta E 76 layout. Bench expectation:
+  // ~2-3× slower than Delta E 76 scalar (extra sqrt for chroma plus
+  // the chroma-scaled denominators), much faster than CIEDE2000.
+  group.bench_function("cie94_scalar", |b| {
+    let mut iter = queries.iter().cycle();
+    b.iter(|| {
+      let q = *iter.next().unwrap();
+      black_box(__bench::cie94_nearest_idx(black_box(q)))
+    })
+  });
+
+  // No SIMD CIEDE2000 bench arm. A NEON attempt benchmarked at
+  // 115.9 µs/query against the scalar baseline's 85.9 µs/query on
+  // 2026-05-03 — the transcendentals (atan2, sin, cos, exp ×
+  // ~10K/query) dominate everything and SIMD only adds load/store
+  // overhead. Discarded per the protocol: try, bench, keep only if
+  // it wins.
 
   // aarch64 NEON.
   #[cfg(target_arch = "aarch64")]

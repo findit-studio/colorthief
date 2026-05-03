@@ -52,7 +52,12 @@ pub use generated::{COLORS, Family, Kind};
 #[doc(hidden)]
 pub mod __bench {
   pub use crate::nearest::{
-    ciede2000::nearest_idx as ciede2000_nearest_idx, scalar::nearest_idx as scalar_nearest_idx,
+    cie94::nearest_idx as cie94_nearest_idx,
+    ciede2000::{
+      nearest_idx as ciede2000_nearest_idx,
+      nearest_idx_prefiltered as ciede2000_prefiltered_nearest_idx,
+    },
+    scalar::nearest_idx as scalar_nearest_idx,
   };
 
   #[cfg(target_arch = "aarch64")]
@@ -229,17 +234,50 @@ impl Color {
   ///
   /// CIEDE2000 corrects Delta E 76's known biases (over-weighting
   /// yellows, under-weighting blues, hue-rotation in the saturated
-  /// blue region). The cost: it pulls in `atan2` / `sin` / `cos` /
-  /// `exp` / branchy hue-wraparound logic, which combine to be
-  /// ~5–10× slower than [`Self::nearest_to`] per query.
+  /// blue region) at the cost of `atan2` / `sin` / `cos` / `exp` per
+  /// pair plus branchy hue-wraparound logic.
   ///
-  /// **Scalar-only** by design: see [`crate::nearest::ciede2000`] for
-  /// the rationale (transcendentals don't vectorise cleanly on any
-  /// 128/256-bit ISA we target). Reach for this when you've measured
-  /// drift on real footage and need the accuracy more than the
-  /// throughput; otherwise prefer [`Self::nearest_to`].
+  /// **Implementation: hierarchical prefilter.** Stage 1 scans every
+  /// palette entry under Delta E 76 (squared Euclidean LAB) and keeps
+  /// the top K = [`crate::nearest::ciede2000::PREFILTER_K`]
+  /// candidates. Stage 2 re-ranks those K with the full CIEDE2000
+  /// formula. ~5× faster than the full scan and **empirically
+  /// equivalent** to it on the 17³ RGB validation grid (zero
+  /// divergences at the chosen K). For strict full-scan semantics on
+  /// inputs outside the validation grid, use
+  /// [`Self::nearest_to_ciede2000_exact`].
+  ///
+  /// Scalar-only — see [`crate::nearest::ciede2000`] for why the
+  /// re-rank stage doesn't benefit from SIMD even with the
+  /// prefilter.
   pub fn nearest_to_ciede2000(rgb: [u8; 3]) -> &'static Color {
+    crate::nearest::nearest_ciede2000_prefiltered(rgb_to_lab(rgb))
+  }
+
+  /// Strict full-scan CIEDE2000 — evaluates the formula against every
+  /// palette entry. Slower (~5×) than the prefiltered default
+  /// [`Self::nearest_to_ciede2000`]; reach for this only if you've
+  /// measured the prefilter diverging on your real inputs (the
+  /// prefilter has zero divergences across the 17³ RGB validation
+  /// grid but isn't proven across every 8-bit input).
+  pub fn nearest_to_ciede2000_exact(rgb: [u8; 3]) -> &'static Color {
     crate::nearest::nearest_ciede2000(rgb_to_lab(rgb))
+  }
+
+  /// Find the entry whose pre-computed LAB is closest to the given
+  /// query RGB by **CIE94** (Delta E 94, graphic-arts weighting).
+  ///
+  /// CIE94 sits between Delta E 76 and CIEDE2000 in both perceptual
+  /// accuracy and arithmetic cost. It uses no transcendentals beyond
+  /// `sqrt`, so unlike CIEDE2000 the formula vectorises cleanly —
+  /// SIMD backends are a planned follow-up that will mirror the
+  /// Delta E 76 module structure.
+  ///
+  /// CIE94 is **asymmetric** (the S_C / S_H scale factors depend on
+  /// the reference's chroma C₁); this implementation treats the
+  /// palette entry as the reference and the query as the sample.
+  pub fn nearest_to_cie94(rgb: [u8; 3]) -> &'static Color {
+    crate::nearest::nearest_cie94(rgb_to_lab(rgb))
   }
 }
 
