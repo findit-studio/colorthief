@@ -15,13 +15,13 @@
 //!   128-bit SSE4.1. Runtime feature-detected (`std`-only).
 //! - [`x86_avx2`] — `cfg(target_arch = "x86_64")`, 8 entries/iter via
 //!   256-bit AVX2. Runtime feature-detected (`std`-only).
+//! - [`x86_avx512`] — `cfg(target_arch = "x86_64")`, 16 entries/iter
+//!   via 512-bit AVX-512F. Runtime feature-detected (`std`-only).
+//!   Requires Rust 1.89+ for stable `_mm512_*` intrinsics; the
+//!   workspace MSRV is 1.95.
 //! - [`wasm_simd128`] — `cfg(all(target_arch = "wasm32",
 //!   target_feature = "simd128"))`, 4 entries/iter via WASM SIMD128.
 //!   Compile-time gated.
-//!
-//! AVX-512 is intentionally absent: its `_mm512_*` intrinsics
-//! stabilised in Rust 1.89 and the workspace MSRV is 1.85; revisit
-//! after the next MSRV bump.
 //!
 //! # Dispatch
 //!
@@ -73,6 +73,9 @@ pub(crate) mod cie94_x86_sse41;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod cie94_x86_avx2;
 
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod cie94_x86_avx512;
+
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub(crate) mod cie94_wasm_simd128;
 
@@ -84,6 +87,9 @@ pub(crate) mod x86_sse41;
 
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_avx2;
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod x86_avx512;
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub(crate) mod wasm_simd128;
@@ -100,9 +106,12 @@ pub(crate) mod wasm_simd128;
 ///
 /// - `--cfg colorthief_force_scalar` — bypass every SIMD backend and
 ///   call the scalar reference unconditionally.
+/// - `--cfg colorthief_disable_avx512` — on x86_64, skip the AVX-512F
+///   tier so the dispatcher falls through to AVX2 (or lower).
 /// - `--cfg colorthief_disable_avx2` — on x86_64, skip the AVX2 tier
 ///   so the dispatcher falls through to SSE4.1 (or scalar if SSE4.1
-///   is also unavailable at runtime).
+///   is also unavailable at runtime). Stacks with
+///   `colorthief_disable_avx512` to force the SSE4.1 path.
 ///
 /// These flags are declared in the workspace's
 /// `[workspace.lints.rust] unexpected_cfgs.check-cfg` so passing them
@@ -141,15 +150,21 @@ pub(crate) fn nearest_idx(query: [f32; 3]) -> usize {
     return wasm_simd128::nearest_idx(query);
   }
 
-  // Tier 1-2: x86_64 std runtime feature detection. AVX2 first, then
-  // SSE4.1; `colorthief_disable_avx2` forces a drop to SSE4.1 for
-  // coverage. The `is_x86_feature_detected!` macro caches the lookup
-  // in an atomic so per-call overhead is a single relaxed load.
+  // Tier 1-3: x86_64 std runtime feature detection. AVX-512F →
+  // AVX2 → SSE4.1 cascade; the `colorthief_disable_avx512` and
+  // `colorthief_disable_avx2` flags force coverage runs through the
+  // lower tiers even on machines that natively support the higher
+  // ones. The `is_x86_feature_detected!` macro caches the lookup in
+  // an atomic so per-call overhead is a single relaxed load.
   #[cfg(all(target_arch = "x86_64", feature = "std", not(colorthief_force_scalar)))]
   {
+    if !cfg!(colorthief_disable_avx512) && std::is_x86_feature_detected!("avx512f") {
+      // SAFETY: feature just verified; `x86_avx512::nearest_idx`
+      // carries `#[target_feature(enable = "avx512f")]`.
+      return unsafe { x86_avx512::nearest_idx(query) };
+    }
     if !cfg!(colorthief_disable_avx2) && std::is_x86_feature_detected!("avx2") {
-      // SAFETY: feature just verified; `x86_avx2::nearest_idx`
-      // carries `#[target_feature(enable = "avx2")]`.
+      // SAFETY: feature just verified.
       return unsafe { x86_avx2::nearest_idx(query) };
     }
     if std::is_x86_feature_detected!("sse4.1") {
@@ -218,9 +233,14 @@ pub(crate) fn nearest_cie94(query: [f32; 3]) -> &'static Color {
     return COLORS[cie94_wasm_simd128::nearest_idx(query)];
   }
 
-  // Tier 1-2: x86_64 std runtime feature detection.
+  // Tier 1-3: x86_64 std runtime feature detection. AVX-512F → AVX2
+  // → SSE4.1, same cascade as Delta E 76's `nearest_idx`.
   #[cfg(all(target_arch = "x86_64", not(colorthief_force_scalar)))]
   {
+    if !cfg!(colorthief_disable_avx512) && std::is_x86_feature_detected!("avx512f") {
+      // SAFETY: feature just verified.
+      return COLORS[unsafe { cie94_x86_avx512::nearest_idx(query) }];
+    }
     if !cfg!(colorthief_disable_avx2) && std::is_x86_feature_detected!("avx2") {
       // SAFETY: feature just verified.
       return COLORS[unsafe { cie94_x86_avx2::nearest_idx(query) }];
@@ -321,6 +341,60 @@ mod tests {
     assert!(
       mismatches.is_empty(),
       "{} scalar/SSE4.1 mismatches; first few: {:?}",
+      mismatches.len(),
+      &mismatches[..mismatches.len().min(5)]
+    );
+  }
+
+  /// x86 AVX-512F ↔ scalar (runs only when AVX-512F is detected on
+  /// the host).
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn avx512_and_scalar_agree_across_grid() {
+    if !std::is_x86_feature_detected!("avx512f") {
+      eprintln!("skipping: AVX-512F not detected on this host");
+      return;
+    }
+    let mut mismatches = Vec::new();
+    for rgb in parity_grid() {
+      let query = crate::rgb_to_lab(rgb);
+      let s = scalar::nearest_idx(query);
+      // SAFETY: feature just verified.
+      let v = unsafe { x86_avx512::nearest_idx(query) };
+      if s != v {
+        mismatches.push((rgb, s, v));
+      }
+    }
+    assert!(
+      mismatches.is_empty(),
+      "{} scalar/AVX-512F mismatches; first few: {:?}",
+      mismatches.len(),
+      &mismatches[..mismatches.len().min(5)]
+    );
+  }
+
+  /// CIE94 x86 AVX-512F ↔ scalar (runs only when AVX-512F is detected
+  /// on the host).
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn cie94_avx512_and_scalar_agree_across_grid() {
+    if !std::is_x86_feature_detected!("avx512f") {
+      eprintln!("skipping: AVX-512F not detected on this host");
+      return;
+    }
+    let mut mismatches = Vec::new();
+    for rgb in parity_grid() {
+      let query = crate::rgb_to_lab(rgb);
+      let s = cie94::nearest_idx(query);
+      // SAFETY: feature verified.
+      let v = unsafe { cie94_x86_avx512::nearest_idx(query) };
+      if s != v {
+        mismatches.push((rgb, s, v));
+      }
+    }
+    assert!(
+      mismatches.is_empty(),
+      "{} CIE94 scalar/AVX-512F mismatches; first few: {:?}",
       mismatches.len(),
       &mismatches[..mismatches.len().min(5)]
     );

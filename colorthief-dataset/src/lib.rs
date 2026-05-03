@@ -42,6 +42,9 @@ mod generated;
 mod nearest;
 
 pub use generated::{COLORS, Family, Kind};
+// `Algorithm` is defined below alongside `Color`; re-exported to
+// crate root for ergonomics — `colorthief_dataset::Algorithm` is
+// where users expect to find it.
 
 /// **Not a stable API.**
 ///
@@ -67,6 +70,8 @@ pub mod __bench {
   #[cfg(target_arch = "x86_64")]
   pub use crate::nearest::cie94_x86_avx2::nearest_idx as cie94_x86_avx2_nearest_idx;
   #[cfg(target_arch = "x86_64")]
+  pub use crate::nearest::cie94_x86_avx512::nearest_idx as cie94_x86_avx512_nearest_idx;
+  #[cfg(target_arch = "x86_64")]
   pub use crate::nearest::cie94_x86_sse41::nearest_idx as cie94_x86_sse41_nearest_idx;
 
   #[cfg(target_arch = "aarch64")]
@@ -77,6 +82,8 @@ pub mod __bench {
   // wraps the `unsafe { ... }` after a runtime feature check.
   #[cfg(target_arch = "x86_64")]
   pub use crate::nearest::x86_avx2::nearest_idx as x86_avx2_nearest_idx;
+  #[cfg(target_arch = "x86_64")]
+  pub use crate::nearest::x86_avx512::nearest_idx as x86_avx512_nearest_idx;
   #[cfg(target_arch = "x86_64")]
   pub use crate::nearest::x86_sse41::nearest_idx as x86_sse41_nearest_idx;
 
@@ -287,6 +294,90 @@ impl Color {
   /// palette entry as the reference and the query as the sample.
   pub fn nearest_to_cie94(rgb: [u8; 3]) -> &'static Color {
     crate::nearest::nearest_cie94(rgb_to_lab(rgb))
+  }
+}
+
+/// Color-difference algorithm used to map an arbitrary RGB query to
+/// its nearest [`Color`] in the xkcd palette.
+///
+/// Each variant corresponds to one of the per-metric
+/// `Color::nearest_to_*` methods. The enum exists so callers can
+/// store the choice as a value and pass it to higher-level APIs like
+/// `colorthief::extract_with` without committing to a specific
+/// `Color::nearest_to_*` callsite.
+///
+/// Marked `#[non_exhaustive]` so adding a future variant (e.g. CMC,
+/// CIEDE2010) is a non-breaking change for downstream consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum Algorithm {
+  /// **Delta E 76** — squared Euclidean LAB distance. Fastest by a
+  /// wide margin (~470 ns/query on Apple Silicon NEON, ~940 ns
+  /// scalar). SIMD-dispatched on every supported arch with bit-
+  /// identical parity. Recommended for search-vocabulary indexing
+  /// where throughput matters more than borderline accuracy.
+  /// **Default.**
+  #[default]
+  DeltaE76,
+
+  /// **CIE94 (Delta E 94, graphic-arts weighting)** — middle ground
+  /// between Delta E 76's speed and CIEDE2000's accuracy. Uses only
+  /// `sqrt` for transcendentals, so it vectorises cleanly. ~900 ns
+  /// NEON / ~4.4 µs scalar. Asymmetric: the palette entry is the
+  /// reference, the query is the sample.
+  Cie94,
+
+  /// **CIEDE2000** with Delta E 76 prefilter (K=96). The modern
+  /// perceptual gold-standard formula at ~5× the cost of the full-
+  /// scan reference. Empirically equivalent to the full scan on the
+  /// 17³ RGB validation grid (zero divergences). Scalar-only
+  /// re-rank stage; the K-candidate prefilter is the existing SIMD
+  /// Delta E 76 scan.
+  Ciede2000,
+
+  /// **Strict full-scan CIEDE2000** — no prefilter. ~5× slower than
+  /// [`Self::Ciede2000`]; reach for this only when you've measured
+  /// the prefilter diverging on your real inputs (the prefilter is
+  /// validated on the 17³ grid but not across every 8-bit RGB
+  /// input).
+  Ciede2000Exact,
+}
+
+impl Algorithm {
+  /// Find the [`Color`] whose pre-computed LAB is closest to the
+  /// given RGB under this algorithm's distance metric.
+  ///
+  /// Equivalent to dispatching to the corresponding
+  /// `Color::nearest_to*` method by hand:
+  ///
+  /// | Variant                    | Equivalent call                                |
+  /// |----------------------------|------------------------------------------------|
+  /// | [`Self::DeltaE76`]         | [`Color::nearest_to`]                          |
+  /// | [`Self::Cie94`]            | [`Color::nearest_to_cie94`]                    |
+  /// | [`Self::Ciede2000`]        | [`Color::nearest_to_ciede2000`]                |
+  /// | [`Self::Ciede2000Exact`]   | [`Color::nearest_to_ciede2000_exact`]          |
+  #[inline]
+  pub fn extract(&self, rgb: [u8; 3]) -> &'static Color {
+    match self {
+      Self::DeltaE76 => Color::nearest_to(rgb),
+      Self::Cie94 => Color::nearest_to_cie94(rgb),
+      Self::Ciede2000 => Color::nearest_to_ciede2000(rgb),
+      Self::Ciede2000Exact => Color::nearest_to_ciede2000_exact(rgb),
+    }
+  }
+
+  /// Stable string identifier for this algorithm — useful for log
+  /// lines, telemetry, and search-index metadata. Mirrors the
+  /// [`Family::as_str`] / [`Kind::as_str`] convention.
+  #[inline]
+  pub const fn as_str(&self) -> &'static str {
+    match self {
+      Self::DeltaE76 => "delta-e-76",
+      Self::Cie94 => "cie94",
+      Self::Ciede2000 => "ciede2000",
+      Self::Ciede2000Exact => "ciede2000-exact",
+    }
   }
 }
 

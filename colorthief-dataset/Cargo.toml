@@ -11,7 +11,7 @@ homepage.workspace = true
 readme = "README.md"
 keywords = ["xkcd", "color", "naming", "no-std", "no-alloc"]
 categories = ["data-structures", "no-std", "no-std::no-alloc"]
-rust-version = "1.85.0"
+rust-version = "1.95.0"
 
 [features]
 default = ["std"]

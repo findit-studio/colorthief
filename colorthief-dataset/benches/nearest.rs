@@ -117,6 +117,16 @@ fn bench_nearest_idx(c: &mut Criterion) {
         })
       });
     }
+    if std::is_x86_feature_detected!("avx512f") {
+      group.bench_function("cie94_x86_avx512", |b| {
+        let mut iter = queries.iter().cycle();
+        b.iter(|| {
+          let q = *iter.next().unwrap();
+          // SAFETY: feature verified.
+          black_box(unsafe { __bench::cie94_x86_avx512_nearest_idx(black_box(q)) })
+        })
+      });
+    }
   }
 
   // CIE94 WASM SIMD128.
@@ -167,6 +177,16 @@ fn bench_nearest_idx(c: &mut Criterion) {
           let q = *iter.next().unwrap();
           // SAFETY: feature just verified.
           black_box(unsafe { __bench::x86_avx2_nearest_idx(black_box(q)) })
+        })
+      });
+    }
+    if std::is_x86_feature_detected!("avx512f") {
+      group.bench_function("x86_avx512", |b| {
+        let mut iter = queries.iter().cycle();
+        b.iter(|| {
+          let q = *iter.next().unwrap();
+          // SAFETY: feature just verified.
+          black_box(unsafe { __bench::x86_avx512_nearest_idx(black_box(q)) })
         })
       });
     }

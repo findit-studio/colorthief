@@ -6,7 +6,7 @@ description = "Dominant-color extraction (MMCQ) and human-vocabulary naming for 
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-rust-version = "1.85.0"
+rust-version = "1.95.0"
 
 [dependencies]
 colorthief-dataset = { workspace = true }

@@ -15,9 +15,11 @@ name: coverage
 #   because NEON is mandatory in Armv8-A).
 # - x86_64 default (Linux): covers whichever top tier the runner CPU
 #   supports (typically AVX2 on Github-hosted Ubuntu).
-# - x86_64 SSE4.1-max: `--cfg colorthief_disable_avx2` → forces the
-#   SSE4.1 branch of the dispatcher and the SSE4.1 kernel even on
-#   AVX2-capable runners.
+# - x86_64 AVX2-max: `--cfg colorthief_disable_avx512` → forces the
+#   AVX2 branch even on AVX-512F-capable runners.
+# - x86_64 SSE4.1-max: `--cfg colorthief_disable_avx512 --cfg
+#   colorthief_disable_avx2` → forces the SSE4.1 branch of the
+#   dispatcher and the SSE4.1 kernel even on AVX2-capable runners.
 # - x86_64 scalar-forced: `--cfg colorthief_force_scalar` → covers
 #   the scalar branch on x86_64.
 #
@@ -71,8 +73,12 @@ jobs:
             rustflags: '--cfg tarpaulin'
             exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/aarch64_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
           - os: ubuntu-latest
+            label: linux-x86_64-avx2-max
+            rustflags: '--cfg tarpaulin --cfg colorthief_disable_avx512'
+            exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/aarch64_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
+          - os: ubuntu-latest
             label: linux-x86_64-sse41-max
-            rustflags: '--cfg tarpaulin --cfg colorthief_disable_avx2'
+            rustflags: '--cfg tarpaulin --cfg colorthief_disable_avx512 --cfg colorthief_disable_avx2'
             exclude_arch: "--exclude-files 'colorthief-dataset/src/nearest/aarch64_*.rs' --exclude-files 'colorthief-dataset/src/nearest/wasm_*.rs'"
           - os: ubuntu-latest
             label: linux-x86_64-scalar
@@ -117,6 +123,7 @@ jobs:
           - macos-aarch64
           - macos-aarch64-scalar
           - linux-x86_64
+          - linux-x86_64-avx2-max
           - linux-x86_64-sse41-max
           - linux-x86_64-scalar
     steps:

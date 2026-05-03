@@ -43,4 +43,5 @@ unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(tarpaulin)',
   'cfg(colorthief_force_scalar)',
   'cfg(colorthief_disable_avx2)',
+  'cfg(colorthief_disable_avx512)',
 ] }

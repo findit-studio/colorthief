@@ -16,10 +16,15 @@ name: SIMD
 #   accidentally moves into a SIMD module — under this cfg every test
 #   must pass entirely on the scalar reference.
 #
+# - `test-disable-avx512-x86_64`: forces the x86_64 dispatcher to skip
+#   the AVX-512F tier and fall through to AVX2. Necessary on runners
+#   that natively support AVX-512F to ensure the AVX2 backend's
+#   parity test still runs in CI.
 # - `test-disable-avx2-x86_64`: forces the x86_64 dispatcher to skip
-#   AVX2 and fall through to SSE4.1 (or scalar if SSE4.1 is also
-#   absent at runtime). On runners whose CPU supports both tiers, this
-#   is the only way to actually exercise the SSE4.1 path.
+#   both AVX-512F and AVX2 and fall through to SSE4.1 (or scalar if
+#   SSE4.1 is also absent at runtime). On runners whose CPU supports
+#   the higher tiers, this is the only way to actually exercise the
+#   SSE4.1 path.
 #
 # - `test-wasm-simd128`: runs the dataset crate's lib tests under
 #   wasmtime with `-C target-feature=+simd128`. Without this job the
@@ -90,16 +95,32 @@ jobs:
       - name: cargo test --workspace (force-scalar)
         run: cargo test --workspace
 
-  # On x86_64, `--cfg colorthief_disable_avx2` makes the dispatcher
-  # skip the AVX2 tier so it falls through to SSE4.1 (or scalar if
-  # SSE4.1 is also unavailable at runtime). On runners whose CPU
-  # supports both AVX2 and SSE4.1, this is the only way to exercise
-  # the SSE4.1 backend's parity test in `nearest::tests`.
+  # On x86_64, `--cfg colorthief_disable_avx512` makes the dispatcher
+  # skip the AVX-512F tier so it falls through to AVX2. Stacks with
+  # `colorthief_disable_avx2` to force the SSE4.1 path.
+  test-disable-avx512-x86_64:
+    name: test (disable-avx512, x86_64)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: '--cfg colorthief_disable_avx512 -Dwarnings'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup update stable && rustup default stable
+      - name: cargo test --workspace (disable-avx512)
+        run: cargo test --workspace
+
+  # On x86_64, `--cfg colorthief_disable_avx2` (combined with
+  # `colorthief_disable_avx512`) forces the dispatcher down to
+  # SSE4.1 even on machines that natively support higher tiers. On
+  # runners whose CPU supports both AVX2 and SSE4.1, this is the only
+  # way to exercise the SSE4.1 backend's parity test in
+  # `nearest::tests`.
   test-disable-avx2-x86_64:
     name: test (disable-avx2, x86_64)
     runs-on: ubuntu-latest
     env:
-      RUSTFLAGS: '--cfg colorthief_disable_avx2 -Dwarnings'
+      RUSTFLAGS: '--cfg colorthief_disable_avx512 --cfg colorthief_disable_avx2 -Dwarnings'
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust

@@ -44,7 +44,7 @@
 // permitted.
 #![deny(unsafe_code)]
 
-pub use colorthief_dataset::{Color, Family, Kind};
+pub use colorthief_dataset::{Algorithm, Color, Family, Kind};
 
 mod mmcq;
 
@@ -226,50 +226,20 @@ impl<'a> RgbFrame<'a> {
 /// honoured as a strict upper bound — the result is truncated to
 /// `count` so `extract(frame, 1)` returns at most one entry.
 ///
-/// Naming defaults to **Delta E 76** (SIMD-dispatched). For other
-/// distance metrics see [`extract_cie94`] (CIE94),
-/// [`extract_ciede2000`] (CIEDE2000 with prefilter), and
-/// [`extract_ciede2000_exact`] (CIEDE2000 full scan).
-pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
-  extract_with(frame, count, Color::nearest_to)
-}
-
-/// Same as [`extract`] but names dominants via **CIE94**
-/// ([`Color::nearest_to_cie94`]) — middle ground between Delta E 76's
-/// speed and CIEDE2000's accuracy. The CIE94 formula's only
-/// transcendental is `sqrt`, so this path is SIMD-dispatched on every
-/// supported arch.
-pub fn extract_cie94(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
-  extract_with(frame, count, Color::nearest_to_cie94)
-}
-
-/// Same as [`extract`] but names dominants via **CIEDE2000** with the
-/// Delta E 76 prefilter ([`Color::nearest_to_ciede2000`]) — full
-/// CIEDE2000 perceptual accuracy, ~5× faster than the strict
-/// full-scan reference. Empirically equivalent to the full scan on
-/// the 17³ RGB validation grid.
-pub fn extract_ciede2000(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
-  extract_with(frame, count, Color::nearest_to_ciede2000)
-}
-
-/// Same as [`extract`] but names dominants via strict full-scan
-/// **CIEDE2000** ([`Color::nearest_to_ciede2000_exact`]). ~5× slower
-/// per-dominant than [`extract_ciede2000`]; use only if you need
-/// guaranteed exact-CIEDE2000 semantics on inputs outside the
-/// prefilter's validation grid.
-pub fn extract_ciede2000_exact(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
-  extract_with(frame, count, Color::nearest_to_ciede2000_exact)
-}
-
-/// Internal: shared MMCQ-driven extraction parameterised by the
-/// per-dominant naming function. The MMCQ stage is identical across
-/// every metric; only the RGB → named-Color step differs.
+/// Naming uses [`Algorithm::default`] (Delta E 76, SIMD-dispatched).
+/// To pick a different metric explicitly use [`extract_with`].
 #[inline]
-fn extract_with(
-  frame: RgbFrame<'_>,
-  count: u8,
-  name_color: fn([u8; 3]) -> &'static Color,
-) -> Vec<Dominant> {
+pub fn extract(frame: RgbFrame<'_>, count: u8) -> Vec<Dominant> {
+  extract_with(frame, count, Algorithm::default())
+}
+
+/// Same as [`extract`] but the per-dominant naming step uses the
+/// algorithm specified by `algo`. See [`Algorithm`] for the variants
+/// and their speed/accuracy trade-offs.
+///
+/// The MMCQ extraction stage is identical regardless of `algo`; only
+/// the RGB → named-`Color` lookup differs.
+pub fn extract_with(frame: RgbFrame<'_>, count: u8, algo: Algorithm) -> Vec<Dominant> {
   if count == 0 {
     return Vec::new();
   }
@@ -277,7 +247,7 @@ fn extract_with(
     .into_iter()
     .map(|d| Dominant {
       rgb: d.rgb,
-      color: name_color(d.rgb),
+      color: algo.extract(d.rgb),
       population: d.population,
     })
     .collect();
