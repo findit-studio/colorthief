@@ -899,4 +899,180 @@ mod tests {
       top.rgb
     );
   }
+
+  /// Empty pixel iterator → empty histogram → `initial_vbox` returns
+  /// `None` → `extract` returns immediately. Pins the early-return
+  /// path that protects against zero-pixel frames slipping through.
+  #[test]
+  fn extract_with_empty_pixel_iterator_yields_nothing() {
+    let mut mmcq = Mmcq::new_boxed();
+    let mut out: Vec<crate::Dominant> = Vec::new();
+    mmcq.extract(
+      core::iter::empty::<[u8; 3]>(),
+      5,
+      crate::Algorithm::default(),
+      &mut out,
+    );
+    assert!(out.is_empty(), "empty input must produce no dominants");
+  }
+
+  /// `count == 0` short-circuits before any work runs. Tests the
+  /// direct `Mmcq::extract` path (the alloc-tier `extract` wrapper has
+  /// its own count-zero test in `tests/extract.rs`).
+  #[test]
+  fn mmcq_extract_count_zero_does_no_work() {
+    let mut mmcq = Mmcq::new_boxed();
+    let buf = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255]; // 1x1, 3 bytes/pixel padded weird? actually 3x1
+    let frame = RgbFrame::try_new(&buf, 3, 1, 9).expect("frame");
+    let mut out: Vec<crate::Dominant> = Vec::new();
+    mmcq.extract(frame.pixels(), 0, crate::Algorithm::default(), &mut out);
+    assert!(out.is_empty(), "count=0 must produce no dominants");
+  }
+
+  /// Output buffer fills before MMCQ produces every requested dominant
+  /// → the inner loop's `try_push` returns `Some(_)` and `extract`
+  /// breaks, leaving the buffer at its capacity. Pins the back-pressure
+  /// contract for the `Buffer` trait under fixed-size arrays.
+  #[test]
+  fn mmcq_extract_stops_when_output_buffer_full() {
+    // 4x4 frame split half red / half blue → MMCQ produces ≥2 dominants.
+    let pixels: Vec<[u8; 3]> = (0..16)
+      .map(|i| if i < 8 { [255, 0, 0] } else { [0, 0, 255] })
+      .collect();
+    let buf = make_frame(4, 4, &pixels);
+    let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
+
+    // Buffer with capacity 1 — second push from MMCQ will be rejected.
+    let mut out: [Option<crate::Dominant>; 1] = [const { None }; 1];
+    let mut mmcq = Mmcq::new_boxed();
+    mmcq.extract(frame.pixels(), 5, crate::Algorithm::default(), &mut out);
+
+    assert!(out[0].is_some(), "first slot must be filled");
+  }
+
+  /// `Mmcq::new()` is the `const fn` placement constructor. Calling it
+  /// from a runtime context (vs `static MMCQ: Mmcq = Mmcq::new()` which
+  /// evaluates at const time and is invisible to LLVM coverage
+  /// instrumentation) ensures the constructor body is measured. The
+  /// 134 KB stack frame is the documented footgun this constructor
+  /// has — `new_boxed` is the right call for non-static placement —
+  /// but the test runner has plenty of stack budget.
+  #[test]
+  fn mmcq_new_const_is_callable() {
+    static MMCQ: Mmcq = Mmcq::new();
+    assert_eq!(MMCQ.histogram[0], 0);
+    assert_eq!(MMCQ.boxes.len(), 0);
+
+    // Force a runtime evaluation of `Mmcq::new()` so its body lights
+    // up in coverage instrumentation. Box-and-drop keeps the 134 KB
+    // alive only for the duration of this expression.
+    let runtime = std::boxed::Box::new(Mmcq::new());
+    assert_eq!(runtime.histogram[0], 0);
+  }
+
+  /// Reusing an `Mmcq` across two extract calls exercises the
+  /// histogram reset and `boxes.clear()` paths at the entry of
+  /// `extract`. The integration test `mmcq_reuse_resets_state_between_calls`
+  /// covers the same property end-to-end through the alloc API; this
+  /// inline version pins the direct `Mmcq::extract` path so the
+  /// internal reset logic stays measured even if the integration test
+  /// is removed.
+  #[test]
+  fn mmcq_reuse_via_direct_extract_resets_state() {
+    let mut mmcq = Mmcq::new_boxed();
+    let red_pixels = vec![[200u8, 30, 30]; 16];
+    let blue_pixels = vec![[30u8, 30, 200]; 16];
+
+    let red_buf = make_frame(4, 4, &red_pixels);
+    let blue_buf = make_frame(4, 4, &blue_pixels);
+    let red_frame = RgbFrame::try_new(&red_buf, 4, 4, 12).expect("frame");
+    let blue_frame = RgbFrame::try_new(&blue_buf, 4, 4, 12).expect("frame");
+
+    let mut red_out: Vec<crate::Dominant> = Vec::new();
+    mmcq.extract(
+      red_frame.pixels(),
+      3,
+      crate::Algorithm::default(),
+      &mut red_out,
+    );
+    let mut blue_out: Vec<crate::Dominant> = Vec::new();
+    mmcq.extract(
+      blue_frame.pixels(),
+      3,
+      crate::Algorithm::default(),
+      &mut blue_out,
+    );
+
+    let red_top = red_out[0].rgb;
+    let blue_top = blue_out[0].rgb;
+    assert!(red_top[0] > 100 && red_top[2] < 100);
+    assert!(blue_top[2] > 100 && blue_top[0] < 100);
+  }
+
+  /// `BoxArena::push` returns `false` once the inline capacity is
+  /// reached. The MMCQ pipeline never produces more than `MAX_BOXES`
+  /// in practice (the iterate_split loop is bounded by `target ≤ 256`),
+  /// so this is a defensive guard. Test it directly so the overflow
+  /// branch is exercised.
+  #[test]
+  fn box_arena_push_rejects_when_full() {
+    let mut arena = BoxArena::new();
+    let template = VBox {
+      r1: 0,
+      r2: 0,
+      g1: 0,
+      g2: 0,
+      b1: 0,
+      b2: 0,
+      count_cache: Some(1),
+      avg_cache: Some([0, 0, 0]),
+    };
+    for _ in 0..MAX_BOXES {
+      assert!(arena.push(template.clone()));
+    }
+    assert!(!arena.push(template), "push must reject when at capacity");
+  }
+
+  /// `VBox::avg` caches its result in `avg_cache` after the first
+  /// call. Re-invoking returns the cached value without re-walking the
+  /// histogram. Exercises the cache-hit early return.
+  #[test]
+  fn vbox_avg_cache_hit_returns_same_value() {
+    let pixels = vec![[120u8, 80, 200]; 16];
+    let buf = make_frame(4, 4, &pixels);
+    let frame = RgbFrame::try_new(&buf, 4, 4, 12).expect("frame");
+    let mut histo = [0u32; HISTO_SIZE];
+    build_histogram(frame.pixels(), &mut histo);
+    let mut vbox = initial_vbox(&histo).expect("non-empty histogram");
+    let first = vbox.avg(&histo);
+    let second = vbox.avg(&histo);
+    assert_eq!(first, second, "avg must be stable across calls");
+  }
+
+  /// `VBox::avg` on an empty box returns the geometric center as the
+  /// "no pixels" fallback. The MMCQ pipeline filters empty boxes out
+  /// before they reach `avg`, but the fallback is reachable directly
+  /// for callers that construct a `VBox` against a histogram that
+  /// doesn't populate the box's range.
+  #[test]
+  fn vbox_avg_on_empty_box_returns_geometric_center() {
+    let histo = [0u32; HISTO_SIZE]; // all-zero — every bin empty.
+    let mut empty = VBox {
+      r1: 0,
+      r2: 7,
+      g1: 0,
+      g2: 7,
+      b1: 0,
+      b2: 7,
+      count_cache: None,
+      avg_cache: None,
+    };
+    let avg = empty.avg(&histo);
+    // Center across (0..=7) on each axis: ((1<<RSHIFT) * (0+7+1)) / 2
+    // = 8 * 8 / 2 = 32. Just pin "non-zero, deterministic, identical
+    // on each channel" — the formula is internal and may be tuned.
+    assert_eq!(avg[0], avg[1]);
+    assert_eq!(avg[1], avg[2]);
+    assert!(avg[0] > 0);
+  }
 }

@@ -102,6 +102,9 @@ jobs:
             --run-types tests \
             --exclude-files 'benches/*' \
             --exclude-files 'xtask/*' \
+            --exclude-files 'colorthief/tests/*' \
+            --exclude-files 'colorthief-dataset/tests/*' \
+            --exclude-files 'colorthief-dataset/src/generated.rs' \
             ${{ matrix.exclude_arch }} \
             --out xml \
             --output-dir coverage

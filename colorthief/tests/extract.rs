@@ -384,6 +384,106 @@ fn rgb48_try_new_rejects_zero_dimension() {
   let buf = vec![0u16; 12];
   let err = Rgb48Frame::try_new(&buf, 0, 4, 12).unwrap_err();
   assert!(matches!(err, RgbFrameError::ZeroDimension { .. }));
+  let err = Rgb48Frame::try_new(&buf, 4, 0, 12).unwrap_err();
+  assert!(matches!(err, RgbFrameError::ZeroDimension { .. }));
+}
+
+/// `Rgb48Frame::try_new` rejects widths whose `3 * width` overflows u32.
+#[test]
+fn rgb48_try_new_rejects_width_overflow() {
+  let buf: Vec<u16> = Vec::new();
+  let err = Rgb48Frame::try_new(&buf, u32::MAX / 2, 1, u32::MAX).unwrap_err();
+  assert!(
+    matches!(err, RgbFrameError::WidthOverflow { .. }),
+    "expected WidthOverflow, got {err:?}",
+  );
+}
+
+/// `Rgb48Frame::try_new` rejects (stride, height) combos whose product
+/// overflows usize. Only meaningful on 32-bit targets — on 64-bit
+/// targets `(u32::MAX as usize) * (u32::MAX as usize)` doesn't
+/// overflow, so the branch is unreachable in practice.
+#[test]
+#[cfg(target_pointer_width = "32")]
+fn rgb48_try_new_rejects_geometry_overflow() {
+  let buf: Vec<u16> = Vec::new();
+  let err = Rgb48Frame::try_new(&buf, 1, u32::MAX, u32::MAX).unwrap_err();
+  assert!(
+    matches!(err, RgbFrameError::GeometryOverflow { .. }),
+    "expected GeometryOverflow, got {err:?}",
+  );
+}
+
+// ---------------------------------------------------------------------
+// RgbFrame error-path coverage (8-bit frame)
+// ---------------------------------------------------------------------
+
+/// `RgbFrame::try_new` rejects zero width or zero height.
+#[test]
+fn rgb_try_new_rejects_zero_dimension() {
+  let buf = vec![0u8; 12];
+  let err = RgbFrame::try_new(&buf, 0, 4, 12).unwrap_err();
+  assert!(matches!(err, RgbFrameError::ZeroDimension { .. }));
+  let err = RgbFrame::try_new(&buf, 4, 0, 12).unwrap_err();
+  assert!(matches!(err, RgbFrameError::ZeroDimension { .. }));
+}
+
+/// `RgbFrame::try_new` rejects stride < 3 * width.
+#[test]
+fn rgb_try_new_rejects_stride_too_small() {
+  let buf = vec![0u8; 16];
+  let err = RgbFrame::try_new(&buf, 4, 2, 8).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      RgbFrameError::StrideTooSmall {
+        min_stride: 12,
+        stride: 8
+      }
+    ),
+    "expected StrideTooSmall, got {err:?}",
+  );
+}
+
+/// `RgbFrame::try_new` rejects buffers shorter than `stride * height`.
+#[test]
+fn rgb_try_new_rejects_plane_too_short() {
+  let buf = vec![0u8; 30];
+  let err = RgbFrame::try_new(&buf, 4, 4, 12).unwrap_err();
+  assert!(
+    matches!(
+      err,
+      RgbFrameError::PlaneTooShort {
+        expected: 48,
+        actual: 30
+      }
+    ),
+    "expected PlaneTooShort, got {err:?}",
+  );
+}
+
+/// `RgbFrame::try_new` rejects widths whose `3 * width` overflows u32.
+#[test]
+fn rgb_try_new_rejects_width_overflow() {
+  let buf: Vec<u8> = Vec::new();
+  let err = RgbFrame::try_new(&buf, u32::MAX / 2, 1, u32::MAX).unwrap_err();
+  assert!(
+    matches!(err, RgbFrameError::WidthOverflow { .. }),
+    "expected WidthOverflow, got {err:?}",
+  );
+}
+
+/// `RgbFrame::try_new` rejects (stride, height) combos whose product
+/// overflows usize. Only meaningful on 32-bit targets.
+#[test]
+#[cfg(target_pointer_width = "32")]
+fn rgb_try_new_rejects_geometry_overflow() {
+  let buf: Vec<u8> = Vec::new();
+  let err = RgbFrame::try_new(&buf, 1, u32::MAX, u32::MAX).unwrap_err();
+  assert!(
+    matches!(err, RgbFrameError::GeometryOverflow { .. }),
+    "expected GeometryOverflow, got {err:?}",
+  );
 }
 
 /// `try_new` rejects stride < 3 * width (in u16 elements).
