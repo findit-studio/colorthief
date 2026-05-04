@@ -5,6 +5,13 @@
 //! `extract` / `as_str` methods. These are the user-visible getters
 //! across the rest of the crate's docs and examples; if the field
 //! layout under `Color` changes, the tests here flag it.
+//!
+//! Skipped under Miri: the dispatcher tests call into per-arch SIMD
+//! kernels (NEON's `vmaxq_f32`, AVX2/SSE4.1) which Miri can't
+//! simulate — the same reason `tests/properties.rs` is gated. The
+//! inline `nearest::tests` module provides accessor coverage that
+//! does run under Miri.
+#![cfg(not(miri))]
 
 use colorthief_dataset::{Algorithm, Color, Family, Kind};
 
