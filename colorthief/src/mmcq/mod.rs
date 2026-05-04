@@ -566,15 +566,6 @@ pub struct Mmcq {
   boxes: BoxArena,
 }
 
-impl Default for Mmcq {
-  /// **Warning**: same caveat as [`Mmcq::new`] — this materializes a
-  /// 134 KB stack frame in the caller. Use [`Mmcq::new_boxed`] or
-  /// `static mut M: Mmcq = Mmcq::new();` instead.
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
 impl Mmcq {
   /// Zero-initialized workspace. **Only call this in a `static` /
   /// `const` context** (or any context where you've confirmed your
@@ -583,6 +574,7 @@ impl Mmcq {
   /// ```ignore
   /// static mut MMCQ: colorthief::Mmcq = colorthief::Mmcq::new();
   /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn new() -> Self {
     Self {
       histogram: [0u32; HISTO_SIZE],
@@ -596,8 +588,9 @@ impl Mmcq {
   /// Uses `Box::new_zeroed` (stable since Rust 1.82) which allocates
   /// and zero-fills directly on the heap; `assume_init` is a bit-level
   /// cast with no copy.
-  #[cfg(feature = "alloc")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[cfg(any(feature = "alloc", feature = "std"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "alloc", feature = "std"))))]
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub fn new_boxed() -> std::boxed::Box<Self> {
     // SAFETY: every field of `Mmcq` has a valid all-zero bit-pattern:
     //

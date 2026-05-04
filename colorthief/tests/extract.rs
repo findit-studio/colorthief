@@ -237,6 +237,11 @@ fn extract_with_count_distinct_colors_returns_full_count() {
     buf.extend_from_slice(&rgb);
   }
   let frame = RgbFrame::try_new(&buf, 8, 8, 24).expect("frame");
+  assert_eq!(frame.rgb(), buf.as_slice());
+  assert_eq!(frame.width(), 8);
+  assert_eq!(frame.height(), 8);
+  assert_eq!(frame.stride(), 24);
+
   let dominants = extract(frame, 5);
   assert_eq!(
     dominants.len(),
@@ -314,6 +319,10 @@ fn solid_color_frame_u16(rgb: [u16; 3], width: u32, height: u32) -> Vec<u16> {
 fn extract_rgb48_on_solid_red_returns_a_red_named_color() {
   let buf = solid_color_frame_u16([0xFF00, 0x0000, 0x0000], 8, 8);
   let frame = Rgb48Frame::try_new(&buf, 8, 8, 24).expect("frame");
+  assert_eq!(frame.width(), 8);
+  assert_eq!(frame.height(), 8);
+  assert_eq!(frame.stride(), 24);
+  assert_eq!(frame.rgb16(), buf.as_slice());
   let dominants = extract_rgb48(frame, 5);
   assert!(!dominants.is_empty(), "expected at least one dominant");
   let top = dominants[0];
@@ -487,4 +496,57 @@ fn mmcq_reuse_resets_state_between_calls() {
     "second-call dominant should be blue, got {:?}",
     blue_first.color().name(),
   );
+}
+
+#[test]
+fn stack_mmcq() {
+  // Workspace placement: `static mut` (no_alloc) or `Mmcq::new_boxed()`
+  // (alloc — see `examples/extract.rs`).
+  static mut MMCQ: Mmcq = Mmcq::new();
+
+  const W: u32 = 16;
+  const H: u32 = 16;
+  const STRIDE: u32 = W * 3;
+
+  // Synthetic 16×16 frame on the stack — 75% red, 25% blue.
+  let mut buf = [0u8; (STRIDE * H) as usize];
+  for row in 0..H as usize {
+    let rgb = if row < 12 {
+      [220, 30, 30]
+    } else {
+      [30, 30, 220]
+    };
+    for col in 0..W as usize {
+      let off = row * STRIDE as usize + col * 3;
+      buf[off..off + 3].copy_from_slice(&rgb);
+    }
+  }
+  let frame = RgbFrame::try_new(&buf, W, H, STRIDE).expect("frame");
+
+  // Output buffer: fixed-capacity, every slot starts as `None` and
+  // `Mmcq::extract` fills the first N positions via the
+  // `impl Buffer<Dominant> for [Option<Dominant>; N]` blanket.
+  let mut out: [Option<Dominant>; 5] = [const { None }; 5];
+
+  // SAFETY: this is the only access to MMCQ in this single-threaded
+  // example. Real `no_std + alloc` consumers should keep the same
+  // single-threaded discipline (typical wasm32-unknown-unknown,
+  // interrupt-free bare metal); multi-threaded environments should
+  // either provide their own synchronization or use the per-call
+  // `Mmcq::new_boxed()` path instead.
+  #[allow(static_mut_refs)]
+  unsafe {
+    (*core::ptr::addr_of_mut!(MMCQ)).extract(frame.pixels(), 5, Algorithm::default(), &mut out);
+  }
+
+  for slot in out.iter().flatten() {
+    println!(
+      "rgb={:?}  name={:?}  family={:?}  pop={}  ({:.1}%)",
+      slot.rgb(),
+      slot.color().name(),
+      slot.color().family().as_str(),
+      slot.population(),
+      slot.percentage(),
+    );
+  }
 }

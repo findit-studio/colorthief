@@ -150,6 +150,7 @@ pub struct RgbFrame<'a> {
 impl<'a> RgbFrame<'a> {
   /// Construct a new [`RgbFrame`], validating dimensions and plane
   /// length.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     rgb: &'a [u8],
     width: u32,
@@ -272,6 +273,7 @@ impl<'a> Rgb48Frame<'a> {
   /// Construct a new [`Rgb48Frame`], validating dimensions and plane
   /// length. The plane length and stride are measured in **u16
   /// elements**, not bytes.
+  #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn try_new(
     rgb16: &'a [u16],
     width: u32,
