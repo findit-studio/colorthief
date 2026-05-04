@@ -105,6 +105,8 @@ jobs:
             --exclude-files 'colorthief/tests/*' \
             --exclude-files 'colorthief-dataset/tests/*' \
             --exclude-files 'colorthief-dataset/src/generated.rs' \
+            --exclude-files 'colorthief-dataset/src/nearest/x86_avx512.rs' \
+            --exclude-files 'colorthief-dataset/src/nearest/cie94_x86_avx512.rs' \
             ${{ matrix.exclude_arch }} \
             --out xml \
             --output-dir coverage
