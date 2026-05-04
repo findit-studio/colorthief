@@ -94,6 +94,7 @@ mod tests {
   /// regressions where the cell containing an entry's RGB wouldn't
   /// list that entry as a candidate.
   #[test]
+  #[cfg_attr(miri, ignore = "949-entry palette × CIEDE2000 too slow under miri")]
   fn idempotent_for_palette_rgb() {
     for entry in COLORS.iter() {
       let rgb = entry.rgb();

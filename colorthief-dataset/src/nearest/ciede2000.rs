@@ -444,6 +444,10 @@ mod tests {
   /// anyway).
   #[test]
   #[cfg(feature = "std")]
+  #[cfg_attr(
+    miri,
+    ignore = "17³ grid × CIEDE2000 transcendentals too slow under miri"
+  )]
   fn prefilter_matches_full_scan_across_grid() {
     let mut mismatches: Vec<([u8; 3], usize, usize)> = Vec::new();
     for r in (0..256u32).step_by(16) {
@@ -474,6 +478,10 @@ mod tests {
   /// claimed minimum. Catches NaN/Inf leaks from any of the
   /// transcendentals.
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "125-query grid × 949-entry CIEDE2000 transcendentals too slow under miri"
+  )]
   fn lookup_returns_valid_index_across_grid() {
     for r in (0..=255u32).step_by(64) {
       for g in (0..=255u32).step_by(64) {

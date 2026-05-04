@@ -304,12 +304,16 @@ mod tests {
   ///
   /// Gated on `feature = "std"` to match the parity tests below — they
   /// all need `Vec` to collect mismatches, which requires `alloc` (and
-  /// the test harness itself needs std). On `cargo hack test
-  /// --no-default-features --features alloc` no SIMD-arch test is
-  /// reachable on Linux/Windows runners (target_arch = x86_64 with
-  /// `feature = "std"` filter excludes them), so this helper would
-  /// otherwise become dead code under `-Dwarnings`.
+  /// the test harness itself needs std).
+  ///
+  /// `#[allow(dead_code)]` because the helper has no consumers on
+  /// targets without any of our SIMD arch matches (e.g. `s390x`,
+  /// `i686`, `powerpc64`, `riscv64gc` in the miri matrix, or aarch64
+  /// without `target_feature = "neon"` like `aarch64-unknown-none-softfloat`).
+  /// On those targets every parity test is cfg-gated out and this
+  /// function would otherwise trip `-Dwarnings`.
   #[cfg(feature = "std")]
+  #[allow(dead_code)]
   fn parity_grid() -> impl Iterator<Item = [u8; 3]> {
     (0..256u32).step_by(16).flat_map(move |r| {
       (0..256u32).step_by(16).flat_map(move |g| {
@@ -340,6 +344,7 @@ mod tests {
   /// the test harness; under `--no-default-features --features alloc`
   /// the test is skipped (the standard test runner requires std).
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "aarch64", target_feature = "neon", feature = "std"))]
   fn neon_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
@@ -362,6 +367,7 @@ mod tests {
   /// x86 SSE4.1 ↔ scalar (runs only when SSE4.1 is detected on the
   /// host running the test binary).
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn sse41_and_scalar_agree_across_grid() {
     if !std::is_x86_feature_detected!("sse4.1") {
@@ -389,6 +395,7 @@ mod tests {
   /// x86 AVX-512F ↔ scalar (runs only when AVX-512F is detected on
   /// the host).
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn avx512_and_scalar_agree_across_grid() {
     if !std::is_x86_feature_detected!("avx512f") {
@@ -416,6 +423,7 @@ mod tests {
   /// CIE94 x86 AVX-512F ↔ scalar (runs only when AVX-512F is detected
   /// on the host).
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn cie94_avx512_and_scalar_agree_across_grid() {
     if !std::is_x86_feature_detected!("avx512f") {
@@ -442,6 +450,7 @@ mod tests {
 
   /// x86 AVX2 ↔ scalar (runs only when AVX2 is detected on the host).
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn avx2_and_scalar_agree_across_grid() {
     if !std::is_x86_feature_detected!("avx2") {
@@ -468,6 +477,7 @@ mod tests {
 
   /// CIE94 aarch64 NEON ↔ scalar.
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "aarch64", target_feature = "neon", feature = "std"))]
   fn cie94_neon_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
@@ -489,6 +499,7 @@ mod tests {
 
   /// CIE94 x86 SSE4.1 ↔ scalar.
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn cie94_sse41_and_scalar_agree_across_grid() {
     if !std::is_x86_feature_detected!("sse4.1") {
@@ -515,6 +526,7 @@ mod tests {
 
   /// CIE94 x86 AVX2 ↔ scalar.
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn cie94_avx2_and_scalar_agree_across_grid() {
     if !std::is_x86_feature_detected!("avx2") {
@@ -541,6 +553,7 @@ mod tests {
 
   /// CIE94 WASM SIMD128 ↔ scalar.
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128", feature = "std"))]
   fn cie94_wasm_simd128_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();
@@ -562,6 +575,7 @@ mod tests {
 
   /// WASM SIMD128 ↔ scalar.
   #[test]
+  #[cfg_attr(miri, ignore = "4913-query × 949-entry grid is too slow under miri")]
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128", feature = "std"))]
   fn wasm_simd128_and_scalar_agree_across_grid() {
     let mut mismatches = Vec::new();

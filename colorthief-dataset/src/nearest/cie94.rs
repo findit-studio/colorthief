@@ -175,6 +175,10 @@ mod tests {
   /// Smoke test: lookup must return a finite valid index and the
   /// chosen entry must actually minimise ΔE94² over the full palette.
   #[test]
+  #[cfg_attr(
+    miri,
+    ignore = "125-query grid × 949-entry palette too slow under miri"
+  )]
   fn lookup_returns_valid_index_across_grid() {
     for r in (0..=255u32).step_by(64) {
       for g in (0..=255u32).step_by(64) {

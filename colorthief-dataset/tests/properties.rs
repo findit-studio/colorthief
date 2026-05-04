@@ -6,6 +6,13 @@
 //! coverage that doesn't fall on grid boundaries — useful for catching
 //! off-by-one issues in tail loops, cancellation near LAB equality,
 //! and shrinking-driven minimal failure cases.
+//!
+//! Skipped under Miri: each property runs ~256 random cases by
+//! default, and each case does an MMCQ-scale loop of f32 math through
+//! the interpreter. The whole file would dominate the Miri job's time
+//! budget for negligible UB-detection value (proptest is for logic
+//! invariants, not memory safety).
+#![cfg(not(miri))]
 
 use colorthief_dataset::{__bench::*, COLORS};
 use proptest::prelude::*;
