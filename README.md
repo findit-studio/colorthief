@@ -3,7 +3,7 @@
 </div>
 <div align="center">
 
-A template for creating Rust open-source GitHub repo.
+Dominant colors with human-vocabulary names for video keyframes — MMCQ extraction + nearest-neighbor lookup against the xkcd color survey.
 
 [<img alt="github" src="https://img.shields.io/badge/github-findit--ai/colorthief-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
 <img alt="LoC" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fal8n%2F327b2a8aef9003246e45c6e47fe63937%2Fraw%2Fcolorthief" height="22">
@@ -50,55 +50,16 @@ Minimum supported Rust version: **1.95** (required for stable AVX-512F
 intrinsics and `core::error::Error` in `no_std` builds via
 `thiserror` 2 without its `std` feature).
 
-## Quick start
+## Examples
 
-### Extract dominants from a video frame
+| Example | Crate | Run |
+|---|---|---|
+| [`extract`](./colorthief/examples/extract.rs) | `colorthief` | `cargo run --release --example extract -p colorthief` |
+| [`extract_rgb48`](./colorthief/examples/extract_rgb48.rs) (HDR / 16-bit) | `colorthief` | `cargo run --release --example extract_rgb48 -p colorthief` |
+| [`lookup`](./colorthief-dataset/examples/lookup.rs) (name-only, no MMCQ) | `colorthief-dataset` | `cargo run --release --example lookup -p colorthief-dataset` |
 
-```rust,no_run
-use colorthief::{extract, RgbFrame};
-
-let frame = RgbFrame::try_new(rgb_bytes, width, height, stride)?;
-for d in extract(frame, 5) {
-    println!(
-        "rgb={:?}  name={:?}  family={:?}  pop={}",
-        d.rgb(),
-        d.color().name(),
-        d.color().family().as_str(),
-        d.population(),
-    );
-}
-```
-
-### Pick a different distance metric
-
-```rust,no_run
-use colorthief::{extract_with, Algorithm, RgbFrame};
-
-let dominants = extract_with(frame, 5, Algorithm::DeltaE76);  // fastest
-```
-
-### Look up a name for an arbitrary RGB
-
-```rust
-use colorthief_dataset::Color;
-
-let c = Color::nearest_to([189, 108, 72]);
-assert_eq!(c.name(), "adobe");
-assert_eq!(c.common_name(), "sienna");
-```
-
-### HDR (16-bit-per-channel) input
-
-```rust,no_run
-use colorthief::{extract_rgb48, Rgb48Frame};
-
-// `rgb16_bytes`: `&[u16]` in `with_rgb_u16` shape — interleaved R,G,B,
-// stride in u16 elements (>= 3 * width).
-let frame = Rgb48Frame::try_new(rgb16_bytes, width, height, stride)?;
-for d in extract_rgb48(frame, 5) {
-    println!("{}", d.color().name());
-}
-```
+See more details in [examples](./colorthief/examples) and
+[examples](./colorthief-dataset/examples).
 
 ## Algorithms
 
@@ -137,8 +98,8 @@ below).
 Both crates are usable in `no_std + no_alloc` environments. Caller
 manages the MMCQ workspace and the output buffer:
 
-```rust,no_run
-use colorthief::{Algorithm, Buffer, Dominant, Mmcq, RgbFrame};
+```rust,ignore
+use colorthief::{Algorithm, Dominant, Mmcq, RgbFrame};
 
 // Workspace placement: `static mut` (no_alloc) or `Mmcq::new_boxed()` (alloc).
 static mut MMCQ: Mmcq = Mmcq::new();

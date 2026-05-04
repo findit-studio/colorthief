@@ -6,6 +6,15 @@ description = "Dominant-color extraction (MMCQ) and human-vocabulary naming for 
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme = "README.md"
+keywords = ["color", "dominant", "mmcq", "xkcd", "no-std"]
+categories = [
+  "multimedia::images",
+  "multimedia::video",
+  "algorithms",
+  "no-std",
+  "no-std::no-alloc",
+]
 rust-version = "1.95.0"
 
 [dependencies]
