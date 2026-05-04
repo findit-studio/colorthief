@@ -24,7 +24,7 @@ and maps each to its closest entry in a 949-color human-vocabulary
 table sourced from the [xkcd color survey][xkcd]. Built for video
 indexing and search-vocabulary pipelines: every output dominant
 carries both the actual MMCQ-extracted RGB (for swatch rendering)
-and the named [`Color`] (for search-index vocabulary), sorted
+and the named `Color` (for search-index vocabulary), sorted
 descending by population.
 
 ## Crates in this workspace

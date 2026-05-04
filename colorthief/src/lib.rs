@@ -2,6 +2,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
+#![allow(clippy::new_without_default)]
 #![deny(missing_docs)]
 // `unsafe_code` is `deny`-not-`forbid` because `mmcq::simd` needs
 // per-arch `#[target_feature(enable = ...)]` SIMD intrinsics, which
