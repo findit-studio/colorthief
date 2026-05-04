@@ -1,0 +1,25 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+rust-version = "1.95.0"
+
+[dependencies]
+csv          = "1"
+serde        = { version = "1", features = ["derive"] }
+proc-macro2  = "1"
+quote        = "1"
+syn          = "2"
+prettyplease = "0.2"
+heck         = "0.5"
+# Use the same libm the dataset crate uses for runtime LAB conversion, so
+# pre-computed and runtime-computed LAB values agree bit-for-bit.
+libm         = { version = "0.2", default-features = false }
+# Parallelizes the 16.7M-query CIEDE2000 sweep that builds the LUT
+# (`compute_lut` in main.rs). Without rayon, codegen on 8 cores would
+# be ~20 min single-threaded; with rayon ~2.5 min. Build-time only.
+rayon        = "1"
+
+[lints]
+workspace = true

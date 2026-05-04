@@ -2,9 +2,11 @@ codecov:
   require_ci_to_pass: false
 
 ignore:
-  - **benches/*
-  - **examples/*
-  - **tests/*
+  - "**benches/*"
+  - "**examples/*"
+  - "**tests/*"
+  - colorthief-dataset/src/generated.rs
+  - xtask/*
 
 coverage:
   status:

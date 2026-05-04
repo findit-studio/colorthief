@@ -35,4 +35,7 @@ cargo miri setup
 
 export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-disable-isolation -Zmiri-symbolic-alignment-check -Zmiri-tree-borrows"
 
-cargo miri test --all-targets --target "$TARGET"
+# `--lib --tests` (not `--all-targets`) so Miri skips `[[bench]]`
+# targets. Criterion's harness spawns subprocesses for warmup
+# (`posix_spawnattr_init` etc.) which Miri can't emulate.
+cargo miri test --lib --tests --target "$TARGET"
