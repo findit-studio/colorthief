@@ -27,21 +27,23 @@ fn main() {
   println!("== default (CIEDE2000Exact) ==");
   for d in extract(frame, 5) {
     println!(
-      "  rgb={:?}  name={:?}  family={:?}  pop={}",
+      "  rgb={:?}  name={:?}  family={:?}  pop={}  ({:.1}%)",
       d.rgb(),
       d.color().name(),
       d.color().family().as_str(),
       d.population(),
+      d.percentage(),
     );
   }
 
   println!("\n== Algorithm::DeltaE76 (fastest) ==");
   for d in extract_with(frame, 5, Algorithm::DeltaE76) {
     println!(
-      "  rgb={:?}  name={:?}  pop={}",
+      "  rgb={:?}  name={:?}  pop={}  ({:.1}%)",
       d.rgb(),
       d.color().name(),
       d.population(),
+      d.percentage(),
     );
   }
 }

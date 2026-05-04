@@ -49,6 +49,7 @@ pub struct Dominant {
   pub(crate) rgb: [u8; 3],
   pub(crate) color: &'static Color,
   pub(crate) population: u32,
+  pub(crate) percentage: f32,
 }
 
 impl Dominant {
@@ -67,9 +68,25 @@ impl Dominant {
   }
 
   /// Number of source-frame pixels assigned to this dominant's box.
+  /// For an absolute "how many of the source pixels does this color
+  /// account for" answer; see [`Self::percentage`] for the relative
+  /// area.
   #[cfg_attr(not(tarpaulin), inline(always))]
   pub const fn population(&self) -> u32 {
     self.population
+  }
+
+  /// Share of the source frame this dominant's box covers, as a
+  /// percentage in `[0.0, 100.0]`. Computed at extraction time as
+  /// `(population / total_frame_pixels) * 100`.
+  ///
+  /// Sums of percentages across one [`extract`] call are at most
+  /// `100.0` and may be less when `count` truncates the dominant
+  /// list before every box is emitted (the dropped boxes' pixels
+  /// are simply unaccounted for in the returned set).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn percentage(&self) -> f32 {
+    self.percentage
   }
 }
 

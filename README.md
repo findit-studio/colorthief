@@ -56,6 +56,7 @@ intrinsics and `core::error::Error` in `no_std` builds via
 |---|---|---|
 | [`extract`](./colorthief/examples/extract.rs) | `colorthief` | `cargo run --release --example extract -p colorthief` |
 | [`extract_rgb48`](./colorthief/examples/extract_rgb48.rs) (HDR / 16-bit) | `colorthief` | `cargo run --release --example extract_rgb48 -p colorthief` |
+| [`extract_no_alloc`](./colorthief/examples/extract_no_alloc.rs) (`static mut Mmcq` + fixed buffer) | `colorthief` | `cargo run --release --example extract_no_alloc -p colorthief` |
 | [`lookup`](./colorthief-dataset/examples/lookup.rs) (name-only, no MMCQ) | `colorthief-dataset` | `cargo run --release --example lookup -p colorthief-dataset` |
 
 See more details in [examples](./colorthief/examples) and
@@ -96,24 +97,10 @@ below).
 ## No-std + no-alloc support
 
 Both crates are usable in `no_std + no_alloc` environments. Caller
-manages the MMCQ workspace and the output buffer:
-
-```rust,ignore
-use colorthief::{Algorithm, Dominant, Mmcq, RgbFrame};
-
-// Workspace placement: `static mut` (no_alloc) or `Mmcq::new_boxed()` (alloc).
-static mut MMCQ: Mmcq = Mmcq::new();
-
-let frame = RgbFrame::try_new(rgb_bytes, width, height, stride)?;
-let mut out: [Option<Dominant>; 5] = [const { None }; 5];
-
-// SAFETY: caller guarantees single-threaded access to MMCQ.
-unsafe {
-    (*core::ptr::addr_of_mut!(MMCQ)).extract(
-        frame.pixels(), 5, Algorithm::default(), &mut out,
-    );
-}
-```
+manages the MMCQ workspace (a `static mut Mmcq` placed in `.bss`) and
+the output buffer (a fixed-size `[Option<Dominant>; N]`). See the
+[`extract_no_alloc`](./colorthief/examples/extract_no_alloc.rs)
+example for the full pattern.
 
 The `Buffer<T>` trait abstracts the output: `Vec<T>` (alloc-gated),
 `[Option<T>; N]`, `&mut [Option<T>]` ship by default; consumers can

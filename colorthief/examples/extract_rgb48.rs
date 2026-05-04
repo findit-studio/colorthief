@@ -30,11 +30,12 @@ fn main() {
 
   for d in extract_rgb48(frame, 5) {
     println!(
-      "rgb={:?}  name={:?}  family={:?}  pop={}",
+      "rgb={:?}  name={:?}  family={:?}  pop={}  ({:.1}%)",
       d.rgb(),
       d.color().name(),
       d.color().family().as_str(),
       d.population(),
+      d.percentage(),
     );
   }
 }

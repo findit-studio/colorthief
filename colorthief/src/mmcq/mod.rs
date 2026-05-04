@@ -633,6 +633,21 @@ impl Mmcq {
     // Build histogram.
     build_histogram(pixels, &mut self.histogram);
 
+    // Total pixel count = sum of all histogram bins. Used to derive
+    // each dominant's `percentage` of the source frame. One pass
+    // over the histogram (32 768 u32 adds ≈ a few µs) is independent
+    // of frame size, unlike incrementing a counter per pixel.
+    // Saturating-add for the unlikely > 4 G pixel case.
+    let total_pixels: u32 = self
+      .histogram
+      .iter()
+      .fold(0u32, |a, b| a.saturating_add(*b));
+    let inv_total_pct: f32 = if total_pixels == 0 {
+      0.0
+    } else {
+      100.0 / total_pixels as f32
+    };
+
     // Initial bounding box. Empty histogram → no work.
     let initial = match initial_vbox(&self.histogram) {
       Some(b) => b,
@@ -683,6 +698,7 @@ impl Mmcq {
         rgb,
         color: algo.extract(rgb),
         population: pop,
+        percentage: pop as f32 * inv_total_pct,
       };
       if out.try_push(dominant).is_some() {
         // Buffer full; stop.
