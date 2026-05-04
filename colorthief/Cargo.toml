@@ -1,6 +1,6 @@
 [package]
 name = "colorthief"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "Dominant-color extraction (MMCQ) and human-vocabulary naming for packed-RGB video keyframes — CIEDE2000 (default, scalar), CIE94 (opt-in, SIMD-dispatched), or Delta E 76 (opt-in, SIMD-dispatched) nearest-neighbor against the xkcd hierarchy."
 license.workspace = true

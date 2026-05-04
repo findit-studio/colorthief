@@ -29,13 +29,13 @@ fn extract_on_solid_red_returns_a_red_named_color() {
   assert!(!dominants.is_empty(), "expected at least one dominant");
   let top = dominants[0];
   assert!(
-    top.color.family().as_str().contains("red") || top.color.name().contains("red"),
+    top.color().family().as_str().contains("red") || top.color().name().contains("red"),
     "top dominant on solid red was rgb={:?} name={:?} family={:?}",
-    top.rgb,
-    top.color.name(),
-    top.color.family().as_str(),
+    top.rgb(),
+    top.color().name(),
+    top.color().family().as_str(),
   );
-  assert!(top.population > 0, "population must be non-zero");
+  assert!(top.population() > 0, "population must be non-zero");
 }
 
 #[test]
@@ -46,11 +46,11 @@ fn extract_on_solid_blue_returns_a_blue_named_color() {
   assert!(!dominants.is_empty());
   let top = dominants[0];
   assert!(
-    top.color.family().as_str().contains("blue") || top.color.name().contains("blue"),
+    top.color().family().as_str().contains("blue") || top.color().name().contains("blue"),
     "top dominant on solid blue was rgb={:?} name={:?} family={:?}",
-    top.rgb,
-    top.color.name(),
-    top.color.family().as_str(),
+    top.rgb(),
+    top.color().name(),
+    top.color().family().as_str(),
   );
 }
 
@@ -78,16 +78,16 @@ fn extract_on_red_blue_split_recovers_both_hues() {
   assert!(dominants.len() >= 2);
   let has_red = dominants
     .iter()
-    .any(|d| d.color.family().as_str().contains("red") || d.color.name().contains("red"));
+    .any(|d| d.color().family().as_str().contains("red") || d.color().name().contains("red"));
   let has_blue = dominants
     .iter()
-    .any(|d| d.color.family().as_str().contains("blue") || d.color.name().contains("blue"));
+    .any(|d| d.color().family().as_str().contains("blue") || d.color().name().contains("blue"));
   assert!(
     has_red && has_blue,
     "expected red and blue named entries, got: {:?}",
     dominants
       .iter()
-      .map(|d| (d.color.name(), d.rgb, d.population))
+      .map(|d| (d.color().name(), d.rgb(), d.population()))
       .collect::<Vec<_>>()
   );
 }
@@ -108,19 +108,19 @@ fn extract_dominants_sorted_by_population_descending() {
   assert!(dominants.len() >= 2);
   for window in dominants.windows(2) {
     assert!(
-      window[0].population >= window[1].population,
+      window[0].population() >= window[1].population(),
       "dominants must be sorted by descending population: {:?}",
       dominants
         .iter()
-        .map(|d| (d.color.name(), d.population))
+        .map(|d| (d.color().name(), d.population()))
         .collect::<Vec<_>>()
     );
   }
   let top = dominants[0];
   assert!(
-    top.color.family().as_str().contains("red") || top.color.name().contains("red"),
+    top.color().family().as_str().contains("red") || top.color().name().contains("red"),
     "75%-red frame: top dominant should be red, got {:?}",
-    top.color.name()
+    top.color().name()
   );
 }
 
@@ -142,7 +142,7 @@ fn extract_count_one_returns_at_most_one() {
     dominants.len() <= 1,
     "extract(_, 1) must return at most 1 entry, got {}: {:?}",
     dominants.len(),
-    dominants.iter().map(|d| d.rgb).collect::<Vec<_>>(),
+    dominants.iter().map(|d| d.rgb()).collect::<Vec<_>>(),
   );
 }
 
@@ -176,7 +176,7 @@ fn extract_count_3_returns_full_count() {
   let dominants = extract(frame, 3);
   assert_eq!(dominants.len(), 3);
   for d in &dominants {
-    assert!(d.population > 0);
+    assert!(d.population() > 0);
   }
 }
 
@@ -199,7 +199,7 @@ fn extract_count_7_returns_full_count() {
   let dominants = extract(frame, 7);
   assert_eq!(dominants.len(), 7);
   for d in &dominants {
-    assert!(d.population > 0);
+    assert!(d.population() > 0);
   }
 }
 
@@ -245,14 +245,14 @@ fn extract_with_count_distinct_colors_returns_full_count() {
     dominants.len(),
     dominants
       .iter()
-      .map(|d| (d.rgb, d.population))
+      .map(|d| (d.rgb(), d.population()))
       .collect::<Vec<_>>(),
   );
   for d in &dominants {
     assert!(
-      d.population > 0,
+      d.population() > 0,
       "zero-population dominant: rgb={:?}",
-      d.rgb
+      d.rgb()
     );
   }
 }
@@ -281,15 +281,15 @@ fn extract_no_zero_population_dominants_below_distinct_color_floor() {
     dominants.len(),
     dominants
       .iter()
-      .map(|d| (d.rgb, d.population))
+      .map(|d| (d.rgb(), d.population()))
       .collect::<Vec<_>>(),
   );
   for d in &dominants {
     assert!(
-      d.population > 0,
+      d.population() > 0,
       "zero-population dominant in result: rgb={:?} name={:?}",
-      d.rgb,
-      d.color.name(),
+      d.rgb(),
+      d.color().name(),
     );
   }
 }
@@ -318,11 +318,11 @@ fn extract_rgb48_on_solid_red_returns_a_red_named_color() {
   assert!(!dominants.is_empty(), "expected at least one dominant");
   let top = dominants[0];
   assert!(
-    top.color.family().as_str().contains("red") || top.color.name().contains("red"),
+    top.color().family().as_str().contains("red") || top.color().name().contains("red"),
     "top dominant on solid red u16 was rgb={:?} name={:?} family={:?}",
-    top.rgb,
-    top.color.name(),
-    top.color.family().as_str(),
+    top.rgb(),
+    top.color().name(),
+    top.color().family().as_str(),
   );
 }
 
@@ -354,16 +354,17 @@ fn extract_rgb48_widened_matches_extract_u8() {
   assert_eq!(d_u8.len(), d_u16.len(), "dominant counts must match");
   for (a, b) in d_u8.iter().zip(d_u16.iter()) {
     assert_eq!(
-      a.rgb, b.rgb,
+      a.rgb(),
+      b.rgb(),
       "u8 and u16-widened paths produced different RGBs"
     );
-    assert_eq!(a.population, b.population, "populations diverged");
+    assert_eq!(a.population(), b.population(), "populations diverged");
     assert_eq!(
-      a.color.name(),
-      b.color.name(),
+      a.color().name(),
+      b.color().name(),
       "named colors diverged: u8={} u16={}",
-      a.color.name(),
-      b.color.name(),
+      a.color().name(),
+      b.color().name(),
     );
   }
 }
@@ -444,11 +445,11 @@ fn mmcq_extract_into_array_buffer_recovers_red() {
     .find_map(|o| o.as_ref())
     .expect("expected at least one dominant");
   assert!(
-    first.color.family().as_str().contains("red") || first.color.name().contains("red"),
+    first.color().family().as_str().contains("red") || first.color().name().contains("red"),
     "expected red-family dominant, got {:?}",
-    first.color.name(),
+    first.color().name(),
   );
-  assert!(first.population > 0);
+  assert!(first.population() > 0);
 }
 
 /// `Mmcq` reuse across calls — verify the workspace can be reused
@@ -468,7 +469,7 @@ fn mmcq_reuse_resets_state_between_calls() {
     .find_map(|o| o.as_ref())
     .expect("red dominant");
   assert!(
-    red_first.color.family().as_str().contains("red") || red_first.color.name().contains("red")
+    red_first.color().family().as_str().contains("red") || red_first.color().name().contains("red")
   );
 
   // Second call: blue frame. Same Mmcq, must NOT remember red state.
@@ -481,8 +482,9 @@ fn mmcq_reuse_resets_state_between_calls() {
     .find_map(|o| o.as_ref())
     .expect("blue dominant");
   assert!(
-    blue_first.color.family().as_str().contains("blue") || blue_first.color.name().contains("blue"),
+    blue_first.color().family().as_str().contains("blue")
+      || blue_first.color().name().contains("blue"),
     "second-call dominant should be blue, got {:?}",
-    blue_first.color.name(),
+    blue_first.color().name(),
   );
 }

@@ -8,7 +8,7 @@ name: SIMD
 #   `colorthief-dataset/src/generated.rs` would change. Catches drift
 #   between `assets/color_hierarchy.csv` and the committed generated
 #   file (including the SoA `LABS_*` arrays the SIMD backends depend
-#   on).
+#   on, and the 32³ CIEDE2000 candidate-set LUT).
 #
 # - `test-force-scalar`: re-run the test suite with `--cfg
 #   colorthief_force_scalar`, which short-circuits every SIMD backend
@@ -58,7 +58,9 @@ jobs:
   # `cargo xtask codegen` must be idempotent: re-running it should
   # produce a `generated.rs` byte-identical to what's committed.
   # Catches drift between `assets/color_hierarchy.csv` and the
-  # checked-in generated source.
+  # checked-in generated source — including the 32³ CIEDE2000
+  # candidate-set LUT, which is rebuilt from the same CSV but takes
+  # ~3 minutes of rayon-parallel CIEDE2000 sweeps to recompute.
   codegen-up-to-date:
     name: codegen-up-to-date
     runs-on: ubuntu-latest
@@ -67,11 +69,14 @@ jobs:
       - name: Install Rust
         run: rustup update stable && rustup default stable && rustup component add rustfmt
       - name: cargo xtask codegen
-        run: cargo xtask codegen
+        # Run in release mode so the LUT computation finishes in ~3 min
+        # rather than ~20 min in debug. The xtask itself is build-time
+        # only, so the longer release-profile compile pays for itself.
+        run: cargo run --release -p xtask -- codegen
       - name: git diff --quiet -- generated.rs
         run: |
           if ! git diff --quiet -- colorthief-dataset/src/generated.rs; then
-            echo "::error::generated.rs is out of sync with assets/color_hierarchy.csv — run 'cargo xtask codegen' and commit the result."
+            echo "::error::generated.rs is out of sync with assets/color_hierarchy.csv — run 'cargo run --release -p xtask -- codegen' and commit the result."
             git diff -- colorthief-dataset/src/generated.rs
             exit 1
           fi

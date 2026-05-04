@@ -17,19 +17,218 @@ A template for creating Rust open-source GitHub repo.
 
 </div>
 
+## Overview
+
+`colorthief` extracts dominant colors from packed-RGB video keyframes
+and maps each to its closest entry in a 949-color human-vocabulary
+table sourced from the [xkcd color survey][xkcd]. Built for video
+indexing and search-vocabulary pipelines: every output dominant
+carries both the actual MMCQ-extracted RGB (for swatch rendering)
+and the named [`Color`] (for search-index vocabulary), sorted
+descending by population.
+
+## Crates in this workspace
+
+| Crate | Purpose |
+|---|---|
+| [`colorthief`](./colorthief) | Dominant-color extraction (MMCQ) + naming pipeline. `RgbFrame<'a>` (8-bit) / `Rgb48Frame<'a>` (16-bit HDR) input. |
+| [`colorthief-dataset`](./colorthief-dataset) | Static xkcd palette + nearest-neighbor lookup with three color-difference metrics (CIEDE2000, CIE94, Delta E 76). `no_std + no_alloc`. |
+| `xtask` | Build-time codegen — re-runs offline to regenerate the static dataset and CIEDE2000 LUT from the upstream CSV. Not published. |
+
 ## Installation
 
 ```toml
 [dependencies]
 colorthief = "0.1"
+
+# Or, if you only need the static palette + nearest-neighbor lookup
+# (no MMCQ; works in no_std + no_alloc):
+colorthief-dataset = "0.1"
 ```
 
-#### License
+Minimum supported Rust version: **1.95** (required for stable AVX-512F
+intrinsics and `core::error::Error` in `no_std` builds via
+`thiserror` 2 without its `std` feature).
 
-`colorthief` is under the terms of both the MIT license and the
-Apache License (Version 2.0).
+## Quick start
 
-See [LICENSE-APACHE](LICENSE-APACHE), [LICENSE-MIT](LICENSE-MIT) for details.
+### Extract dominants from a video frame
+
+```rust,no_run
+use colorthief::{extract, RgbFrame};
+
+let frame = RgbFrame::try_new(rgb_bytes, width, height, stride)?;
+for d in extract(frame, 5) {
+    println!(
+        "rgb={:?}  name={:?}  family={:?}  pop={}",
+        d.rgb(),
+        d.color().name(),
+        d.color().family().as_str(),
+        d.population(),
+    );
+}
+```
+
+### Pick a different distance metric
+
+```rust,no_run
+use colorthief::{extract_with, Algorithm, RgbFrame};
+
+let dominants = extract_with(frame, 5, Algorithm::DeltaE76);  // fastest
+```
+
+### Look up a name for an arbitrary RGB
+
+```rust
+use colorthief_dataset::Color;
+
+let c = Color::nearest_to([189, 108, 72]);
+assert_eq!(c.name(), "adobe");
+assert_eq!(c.common_name(), "sienna");
+```
+
+### HDR (16-bit-per-channel) input
+
+```rust,no_run
+use colorthief::{extract_rgb48, Rgb48Frame};
+
+// `rgb16_bytes`: `&[u16]` in `with_rgb_u16` shape — interleaved R,G,B,
+// stride in u16 elements (>= 3 * width).
+let frame = Rgb48Frame::try_new(rgb16_bytes, width, height, stride)?;
+for d in extract_rgb48(frame, 5) {
+    println!("{}", d.color().name());
+}
+```
+
+## Algorithms
+
+Three nearest-neighbor metrics, behind a `#[non_exhaustive] #[repr(u8)]` enum:
+
+| `Algorithm` | Speed (NEON) | Notes |
+|---|---:|---|
+| `Ciede2000Exact` (default) | ~230 ns/query (LUT) or 71.5 µs (full scan) | Modern perceptual gold-standard. Provably exact at u8 RGB resolution when `lut` feature is on. |
+| `Cie94` | ~510 ns/query | Asymmetric (palette = reference). Mid-accuracy. |
+| `DeltaE76` | ~470 ns/query | Squared Euclidean LAB. Fastest, but well-known biases in the saturated blue / yellow regions. |
+
+The default `Ciede2000Exact` is ~310× faster than naive full-scan
+thanks to a pre-computed 32³ candidate-set LUT (see Architecture
+below).
+
+## Feature flags
+
+`colorthief`:
+
+| Feature | Default | Effect |
+|---|:---:|---|
+| `std` | ✓ | `thread_local!`-cached MMCQ workspace; zero-alloc-per-call after first call per thread. Implies `alloc`. |
+| `alloc` | | Heap allocator available; enables `Vec<Dominant>`-returning APIs and `Mmcq::new_boxed()`. |
+| `lut` | ✓ | 32³ candidate-set LUT for CIEDE2000 — ~256 KB binary cost, ~310× CIEDE2000 speedup. |
+
+`colorthief-dataset`:
+
+| Feature | Default | Effect |
+|---|:---:|---|
+| `std` | ✓ | Enables x86_64 runtime CPU-feature detection. |
+| `alloc` | | Forward-compat hook (current API is `no_alloc`). |
+| `lut` | ✓ | The 32³ CIEDE2000 LUT — propagated from `colorthief/lut`. |
+
+## No-std + no-alloc support
+
+Both crates are usable in `no_std + no_alloc` environments. Caller
+manages the MMCQ workspace and the output buffer:
+
+```rust,no_run
+use colorthief::{Algorithm, Buffer, Dominant, Mmcq, RgbFrame};
+
+// Workspace placement: `static mut` (no_alloc) or `Mmcq::new_boxed()` (alloc).
+static mut MMCQ: Mmcq = Mmcq::new();
+
+let frame = RgbFrame::try_new(rgb_bytes, width, height, stride)?;
+let mut out: [Option<Dominant>; 5] = [const { None }; 5];
+
+// SAFETY: caller guarantees single-threaded access to MMCQ.
+unsafe {
+    (*core::ptr::addr_of_mut!(MMCQ)).extract(
+        frame.pixels(), 5, Algorithm::default(), &mut out,
+    );
+}
+```
+
+The `Buffer<T>` trait abstracts the output: `Vec<T>` (alloc-gated),
+`[Option<T>; N]`, `&mut [Option<T>]` ship by default; consumers can
+plug in `arrayvec::ArrayVec` / `heapless::Vec` / custom types with
+a one-line `impl Buffer<T>`.
+
+For zero-alloc-per-call in single-threaded `no_std + alloc`
+environments (typical wasm32-unknown-unknown / interrupt-free bare
+metal), place an `Mmcq` in `static mut` yourself — the `unsafe`
+then sits at your call site, not silently inside this crate.
+
+## SIMD backends
+
+`Color::nearest_to` (Delta E 76) and `Color::nearest_to_cie94`
+dispatch to per-arch SIMD backends:
+
+| Backend | ISA | Lanes | Detection |
+|---|---|---:|---|
+| `aarch64_neon` | NEON | 4 (128-bit) | compile-time (`target_feature = "neon"`) |
+| `x86_avx512` | AVX-512F | 16 (512-bit) | runtime (`is_x86_feature_detected!`) |
+| `x86_avx2` | AVX2 | 8 (256-bit) | runtime |
+| `x86_sse41` | SSE4.1 | 4 (128-bit) | runtime |
+| `wasm_simd128` | SIMD128 | 4 (128-bit) | compile-time (`target_feature = "simd128"`) |
+| `scalar` | — | 1 | always available |
+
+Every backend is **bit-identical** to the scalar reference — plain
+`mul + add` (no FMA) — and verified against a 17³ = 4913-point
+inline parity grid plus an exhaustive 256³ = 16,777,216-point sweep
+(`#[ignore]`-gated; run via `cargo test --release --ignored`).
+
+CIEDE2000 is scalar-only by design — its `atan2` / `sin` / `cos` /
+`exp` and branchy hue-wraparound logic don't vectorize cleanly; an
+attempt regressed by ~35% vs the scalar baseline.
+
+## Codegen pipeline
+
+`colorthief-dataset/src/generated.rs` is produced offline by
+`cargo run --release -p xtask -- codegen`. The xtask:
+
+1. Parses `colorthief-dataset/assets/color_hierarchy.csv` (sourced
+   from Stitch Fix's [`colornamer`][colornamer], Apache-2.0).
+2. Computes CIE LAB (D65, 2°) per entry.
+3. Computes the 32³ CIEDE2000 candidate-set LUT (rayon-parallel,
+   ~3 min on Apple Silicon — every u8 RGB swept through the
+   full-scan reference).
+4. Emits two `#[non_exhaustive] #[repr(u8)]` enums (`Family`, `Kind`)
+   covering every distinct value in the CSV.
+5. Pretty-prints + `rustfmt`s the result so it passes `cargo fmt
+   --check`.
+
+CI's `codegen-up-to-date` job re-runs the xtask and fails if
+`generated.rs` would change — guarantees no drift between `assets/`
+and the committed source.
+
+## Coverage-side cfgs
+
+For coverage runs that need to exercise lower-tier SIMD branches on
+hardware that natively supports a higher tier:
+
+- `--cfg colorthief_force_scalar` — bypass every SIMD backend.
+- `--cfg colorthief_disable_avx512` — drop x86_64 from AVX-512F to AVX2.
+- `--cfg colorthief_disable_avx2` — drop x86_64 to SSE4.1.
+
+These flags are also exercised by the `simd.yml` CI workflow.
+
+## License
+
+`colorthief` is dual-licensed under MIT or Apache-2.0 at your
+option.
+
+See [LICENSE-APACHE](LICENSE-APACHE), [LICENSE-MIT](LICENSE-MIT) for
+details.
+
+The upstream xkcd color-survey data is public domain (Randall
+Munroe); Stitch Fix's hierarchical name layers are Apache-2.0
+(attribution in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)).
 
 Copyright (c) 2026 FinDIT Studio authors.
 
@@ -39,3 +238,5 @@ Copyright (c) 2026 FinDIT Studio authors.
 [crates-url]: https://crates.io/crates/colorthief
 [codecov-url]: https://app.codecov.io/gh/findit-ai/colorthief/
 [zh-cn-url]: https://github.com/findit-ai/colorthief/tree/main/README-zh_CN.md
+[xkcd]: https://blog.xkcd.com/2010/05/03/color-survey-results/
+[colornamer]: https://github.com/stitchfix/colornamer

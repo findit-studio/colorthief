@@ -1,6 +1,6 @@
 [package]
 name = "colorthief-dataset"
-version = "0.0.0"
+version = "0.1.0"
 # Pinned to edition 2024 to match the workspace; the crate is `no_std`
 # (and no_alloc) so this is a pure language-version choice.
 edition = "2024"

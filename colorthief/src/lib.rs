@@ -46,14 +46,31 @@ use thiserror::Error;
 /// ranking, merging across frames, or thresholding visual significance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Dominant {
-  /// MMCQ-extracted dominant RGB.
-  pub rgb: [u8; 3],
-  /// Closest entry in the xkcd hierarchy to `rgb`, under the
-  /// algorithm passed to [`extract_with`] (or [`Algorithm::default`]
-  /// when [`extract`] is used).
-  pub color: &'static Color,
+  pub(crate) rgb: [u8; 3],
+  pub(crate) color: &'static Color,
+  pub(crate) population: u32,
+}
+
+impl Dominant {
+  /// MMCQ-extracted dominant RGB (post-5-bit-bin centered).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn rgb(&self) -> [u8; 3] {
+    self.rgb
+  }
+
+  /// Closest entry in the xkcd hierarchy to [`Self::rgb`], under
+  /// the algorithm passed to [`extract_with`] (or
+  /// [`Algorithm::default`] when [`extract`] is used).
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn color(&self) -> &'static Color {
+    self.color
+  }
+
   /// Number of source-frame pixels assigned to this dominant's box.
-  pub population: u32,
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn population(&self) -> u32 {
+    self.population
+  }
 }
 
 /// Errors returned by [`RgbFrame::try_new`].
