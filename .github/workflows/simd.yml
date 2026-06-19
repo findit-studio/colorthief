@@ -65,7 +65,7 @@ jobs:
     name: codegen-up-to-date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup update stable && rustup default stable && rustup component add rustfmt
       - name: cargo xtask codegen
@@ -94,7 +94,7 @@ jobs:
     env:
       RUSTFLAGS: '--cfg colorthief_force_scalar -Dwarnings'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: cargo test --workspace (force-scalar)
@@ -109,7 +109,7 @@ jobs:
     env:
       RUSTFLAGS: '--cfg colorthief_disable_avx512 -Dwarnings'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup update stable && rustup default stable
       - name: cargo test --workspace (disable-avx512)
@@ -127,7 +127,7 @@ jobs:
     env:
       RUSTFLAGS: '--cfg colorthief_disable_avx512 --cfg colorthief_disable_avx2 -Dwarnings'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup update stable && rustup default stable
       - name: cargo test --workspace (disable-avx2)
@@ -141,7 +141,7 @@ jobs:
     name: test-wasm-simd128
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Cache cargo build and registry
         uses: actions/cache@v5
         with:
