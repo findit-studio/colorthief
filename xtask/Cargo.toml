@@ -11,7 +11,7 @@ serde        = { version = "1", features = ["derive"] }
 proc-macro2  = "1"
 quote        = "1"
 syn          = "2"
-prettyplease = "0.2"
+prettyplease = "0.3"
 heck         = "0.5"
 # Use the same libm the dataset crate uses for runtime LAB conversion, so
 # pre-computed and runtime-computed LAB values agree bit-for-bit.
