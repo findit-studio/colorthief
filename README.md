@@ -76,6 +76,45 @@ The default `Ciede2000Exact` is ~310× faster than naive full-scan
 thanks to a pre-computed 32³ candidate-set LUT (see Architecture
 below).
 
+## Permanent color ids
+
+Every entry carries a `ColorId` — a permanent, stable `u16` handle you
+can store now and resolve back later:
+
+```rust
+use colorthief_dataset::{Color, ColorId};
+
+let entry = Color::nearest_to([189, 108, 72]);
+let stored: u16 = entry.id().get();   // → a database column, a wire field
+
+let recovered = Color::from_id(ColorId::new(stored)).expect("assigned id");
+assert_eq!(recovered.name(), entry.name());
+```
+
+`Color::id` and `Color::from_id` are a bijection onto the assigned ids,
+so a downstream store never has to mint an identifier of its own — it
+keeps two bytes and looks the row back up. `from_id` is total: an id the
+dataset does not carry answers `None`, never a neighbouring color.
+
+The ids obey one discipline, and it is what makes them worth storing:
+
+- An id is assigned once and **never changes**. Correcting an entry's
+  name, RGB, hex, family or kind keeps its id.
+- A **deleted entry's id is never reused** — `from_id` answers `None`
+  for it forever after.
+- A **new entry mints a fresh id**, above every id ever assigned.
+
+Ids start at 1, so a zeroed column never resolves. An id is *not* a
+position in `Color::all()`: retirements make the two diverge, and only
+the id is stable across dataset revisions.
+
+The assignment lives in
+[`colorthief-dataset/assets/color_ids.csv`](./colorthief-dataset/assets/color_ids.csv) —
+the ledger the codegen reads, extends, and rewrites, and the reviewable
+form of what `generated.rs` ships. `colorthief-dataset/tests/ids.rs`
+pins the complete assignment and CI re-runs the codegen, so a
+regeneration that renumbers anything fails loudly.
+
 ## Feature flags
 
 `colorthief`:
@@ -142,18 +181,49 @@ attempt regressed by ~35% vs the scalar baseline.
 
 1. Parses `colorthief-dataset/assets/color_hierarchy.csv` (sourced
    from Stitch Fix's [`colornamer`][colornamer], Apache-2.0).
-2. Computes CIE LAB (D65, 2°) per entry.
-3. Computes the 32³ CIEDE2000 candidate-set LUT (rayon-parallel,
+2. Resolves each row's permanent `ColorId` against
+   `colorthief-dataset/assets/color_ids.csv`, minting fresh ids above
+   the high-water mark for rows the ledger has never seen and
+   rewriting it. Ids already assigned never move; rows the CSV has
+   dropped stay in the ledger, retired, so their number is never
+   handed out again.
+
+   Every row is load-bearing — a retired one is the only record that
+   its id was spent — so the ledger only ever grows. A missing ledger
+   is a hard error rather than a silent regeneration
+   (`--bootstrap-ledger` is the explicit, once-ever opt-in), and every
+   way a name can land on an id it did not hold before stops for the
+   operator. A run that both retires *and* mints looks exactly like a
+   rename, so it asks which it is: a rename (edit the name in place in
+   the ledger, keeping its id) or two unrelated events
+   (`--allow-retire-and-mint`). A name matching a *retired* row asks
+   too (`--allow-revival`) — recovering its own id is right if the
+   colour genuinely came back, and wrong if a different one has
+   arrived under a dead name, and nothing in the ledger distinguishes
+   them. Minting a fresh id above the high-water mark is the only way
+   a name acquires an id unattended.
+3. Computes CIE LAB (D65, 2°) per entry.
+4. Computes the 32³ CIEDE2000 candidate-set LUT (rayon-parallel,
    ~3 min on Apple Silicon — every u8 RGB swept through the
    full-scan reference).
-4. Emits two `#[non_exhaustive] #[repr(u8)]` enums (`Family`, `Kind`)
+5. Emits two `#[non_exhaustive] #[repr(u8)]` enums (`Family`, `Kind`)
    covering every distinct value in the CSV.
-5. Pretty-prints + `rustfmt`s the result so it passes `cargo fmt
+6. Pretty-prints + `rustfmt`s the result so it passes `cargo fmt
    --check`.
 
-CI's `codegen-up-to-date` job re-runs the xtask and fails if
-`generated.rs` would change — guarantees no drift between `assets/`
-and the committed source.
+The upstream CSV stays verbatim-replaceable: the ids live beside it
+rather than in it, matched on the `xkcd_color` column, so a
+`colornamer` refresh is a file drop plus whatever mints and
+retirements it implies.
+
+CI's `codegen-up-to-date` job re-runs the xtask and fails if either
+`generated.rs` or `color_ids.csv` changes or goes untracked —
+guaranteeing no drift between `assets/` and the committed source, and
+catching an entry whose id was minted in CI rather than committed.
+`colorthief-dataset/tests/ids.rs` pins the ledger separately, retired
+rows included, because a lost tombstone is invisible to everything
+else: the table, the generated file and the codegen diff all agree
+with the shortened ledger.
 
 ## Coverage-side cfgs
 

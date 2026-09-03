@@ -1,6 +1,6 @@
 [package]
 name = "colorthief-dataset"
-version = "0.1.0"
+version = "0.2.0"
 # Pinned to edition 2024 to match the workspace; the crate is `no_std`
 # (and no_alloc) so this is a pure language-version choice.
 edition = "2024"
@@ -39,6 +39,11 @@ libm = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
+# `tests/ids.rs` reads `assets/color_ids.csv` — the permanent-id ledger —
+# and checks it against the shipped table. It must accept everything the
+# xtask writer can emit, including names that need quoting, so it reads
+# with the same CSV dialect rather than a hand-rolled splitter.
+csv = "1"
 # Property-based tests live in `tests/properties.rs`; we only need the
 # minimum runtime surface (`std`), no fork/timeout/bit-set extras.
 proptest = { version = "1", default-features = false, features = ["std"] }

@@ -170,8 +170,15 @@ jobs:
       #
       # `--exclude xtask` because xtask is a build-time codegen binary
       # that doesn't expose the `std` feature (only `colorthief` and
-      # `colorthief-dataset` do).
+      # `colorthief-dataset` do). Its own tests run in the next step.
       run: cargo hack test --each-feature --features std --exclude xtask
+    - name: Run xtask tests
+      # xtask is excluded from the feature matrix above (it has no
+      # features), but its permanent-id ledger decides which `ColorId`
+      # every entry ships with — a public API guarantee — so its unit
+      # tests have to run somewhere. A plain `cargo test` sidesteps the
+      # `--each-feature` problem entirely.
+      run: cargo test -p xtask
 
   sanitizer:
     name: sanitizer
