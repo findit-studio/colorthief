@@ -1,3 +1,75 @@
+# 0.2.0 (2026-09-04)
+
+Additive across the board — nothing existing changed shape. `Color`
+grew a private field and both crates grew public items; no existing
+type, function or signature changed, so nothing downstream needs
+editing beyond the version requirement.
+
+## `colorthief-dataset`
+
+- **Permanent color ids.** Every entry now carries a `ColorId`, a
+  stable `u16` handle callers can store and resolve back with
+  `Color::from_id`. `Color::id` / `Color::from_id` are a bijection onto
+  the assigned ids, and `from_id` is total: an id the dataset does not
+  carry answers `None` rather than a neighbouring color. Ids start at 1,
+  so a zeroed storage column never resolves.
+
+  The ids are permanent by construction, not by convention: an id is
+  assigned once and survives any correction to the entry, a retired
+  entry's id is never reused, and a new entry mints above the
+  high-water mark. `assets/color_ids.csv` is the ledger the codegen
+  assigns from — it lives beside the upstream CSV rather than in it, so
+  a `colornamer` refresh stays a verbatim file drop.
+
+  An id is **not** a `COLORS` index. Only the id is stable across
+  dataset revisions.
+
+- `tests/ids.rs` pins the complete assignment against a fingerprint and
+  pins every ledger row separately — retired ones included, since a lost
+  tombstone is invisible to the shipped table. It cross-checks table
+  against ledger both ways, sweeps `from_id` over the whole `u16` range,
+  and renumbers the assignment on purpose to prove both pins catch it.
+
+## `colorthief`
+
+- Re-exports `ColorId` alongside `Color`, `Algorithm`, `Family`, `Kind`.
+
+## `xtask`
+
+- Reads and rewrites the permanent-id ledger during `codegen`, minting
+  ids for new entries and refusing a ledger with a duplicate id, a
+  duplicate name, or the reserved id 0.
+- Refuses to run at all when the ledger is missing. It is the only
+  record of which ids have been spent, so regenerating it from the
+  upstream CSV would renumber the dataset and remint every retired id;
+  `--bootstrap-ledger` is the explicit opt-in for creating one.
+- Refuses a run that both retires and mints, which is what an upstream
+  rename looks like from the generator's side — minting there would
+  break every id already stored for the renamed color. Fix the name in
+  place in the ledger, or pass `--allow-retire-and-mint` to confirm the
+  events are unrelated.
+- Refuses to hand a **retired** id back out without `--allow-revival`.
+  A colour that left and came back should recover its own id, but from
+  the generator's side that is indistinguishable from a different
+  colour arriving under a name some earlier entry held — and the two
+  halves can even land in separate commits, so pairing a revival with a
+  retirement in the same run does not catch it. Minting above the
+  high-water mark stays the only unattended way to acquire an id.
+- Commits both `generated.rs` and the ledger by staging each beside its
+  destination and renaming them together under an OS advisory lock,
+  after re-checking that *both* inputs on disk — the ledger and
+  `color_hierarchy.csv` — are still the ones the run read. The upstream
+  file needs its own check: an edit to an RGB, a hex or the row order
+  rewrites the table and the LUT while leaving the ledger
+  byte-identical. A failed, refused or interrupted run leaves both
+  artifacts exactly as they were, and concurrent runs can neither
+  interleave nor overwrite a newer result.
+- Ledger behavior is unit-tested (retirement of the high-water id,
+  tombstone loss, reappearance, rename, reordered input, `u16`
+  exhaustion, quoted-name round trip) and CI now runs those tests.
+- CI's `codegen-up-to-date` job diffs the ledger alongside
+  `generated.rs`, and fails if the ledger is untracked.
+
 # 0.1.0 (2026-05-04)
 
 Initial release. Two crates: `colorthief` (dominant-color extraction

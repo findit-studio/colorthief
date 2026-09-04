@@ -21,7 +21,7 @@ extern crate std;
 #[cfg(any(feature = "alloc", feature = "std"))]
 use std::vec::Vec;
 
-pub use colorthief_dataset::{Algorithm, Color, Family, Kind};
+pub use colorthief_dataset::{Algorithm, Color, ColorId, Family, Kind};
 
 mod buffer;
 pub use buffer::Buffer;

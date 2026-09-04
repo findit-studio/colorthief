@@ -1,0 +1,999 @@
+# colorthief-dataset — the permanent color-id ledger.
+#
+# THIS FILE IS THE AUTHORITY FOR `ColorId`. `cargo run --release -p xtask
+# -- codegen` reads it, mints ids for any new `color_hierarchy.csv` row,
+# rewrites it, and emits the ids into `src/generated.rs`, where they are
+# part of the crate's PUBLIC API. Downstream stores the id and looks the
+# row back up; a renumbering silently repoints stored data at the wrong
+# color.
+#
+# The id discipline — these ids are PERMANENT:
+#
+#   * An id is assigned once and NEVER changes. Correcting an entry's
+#     name, design/common columns, rgb, hex, family or kind KEEPS its id.
+#   * A deleted entry's id is NEVER reused. Its row stays here, retired,
+#     so the mint can never hand the number out again. If that same
+#     color later returns, recovering its own id is correct — but
+#     codegen cannot tell it from a DIFFERENT color arriving under a
+#     name some earlier entry used to hold, so it refuses either way
+#     until you pass --allow-revival to say which it is.
+#   * A new entry mints a fresh id: the high-water mark plus one. Ids
+#     start at 1 — 0 is never assigned, so a zeroed id is always
+#     detectably invalid.
+#
+# EVERY ROW HERE IS LOAD-BEARING, retired ones included. A retired row
+# is the only record that its number was ever handed out; delete it and
+# the next mint can hand the same number to a different color. Rows are
+# only ever added or edited in place — never removed, never renumbered,
+# and the file is never regenerated from scratch. `tests/ids.rs` pins
+# every row, retired ones included, and CI re-runs codegen and fails on
+# any drift in this file.
+#
+# The `retired` column is the row's liveness as of THIS commit, and it
+# is load-bearing too: it is the only record of which names were live
+# last time. The generator reads it to tell a retirement that happened
+# in the run it is executing from one that happened revisions ago, and
+# to notice a surviving name landing on a tombstone. Flipping it by
+# hand re-arms or disarms those gates — leave it to the generator.
+#
+# `xkcd_color` is the join key the generator matches CSV rows on, so
+# renaming an entry upstream is a CORRECTION, not a delete-and-insert:
+# edit the name in place HERE, keeping its id, in the same commit that
+# changes `color_hierarchy.csv`. Dropping the row instead would give the
+# color an id it did not hold before — a freshly minted one, or a
+# retired one if the new name is already here as a tombstone — and break
+# every id already stored downstream. Codegen cannot tell a rename from
+# a delete-and-insert, so it refuses any run that retires a name live
+# last run while some other name picks up an id it did not hold, until
+# you either fix the name in place or pass --allow-retire-and-mint to
+# confirm the events are unrelated.
+id,xkcd_color,retired
+1,acid green,false
+2,adobe,false
+3,algae,false
+4,algae green,false
+5,almost black,false
+6,amber,false
+7,amethyst,false
+8,apple,false
+9,apple green,false
+10,apricot,false
+11,aqua,false
+12,aqua blue,false
+13,aqua green,false
+14,aqua marine,false
+15,aquamarine,false
+16,army green,false
+17,asparagus,false
+18,aubergine,false
+19,auburn,false
+20,avocado,false
+21,avocado green,false
+22,azul,false
+23,azure,false
+24,baby blue,false
+25,baby green,false
+26,baby pink,false
+27,baby poo,false
+28,baby poop,false
+29,baby poop green,false
+30,baby puke green,false
+31,baby purple,false
+32,baby shit brown,false
+33,baby shit green,false
+34,banana,false
+35,banana yellow,false
+36,barbie pink,false
+37,barf green,false
+38,barney,false
+39,barney purple,false
+40,battleship grey,false
+41,beige,false
+42,berry,false
+43,bile,false
+44,black,false
+45,bland,false
+46,blood,false
+47,blood orange,false
+48,blood red,false
+49,blue,false
+50,blue blue,false
+51,blue green,false
+52,blue grey,false
+53,blue purple,false
+54,blue violet,false
+55,blue with a hint of purple,false
+56,blue/green,false
+57,blue/grey,false
+58,blue/purple,false
+59,blueberry,false
+60,bluegreen,false
+61,bluegrey,false
+62,bluey green,false
+63,bluey grey,false
+64,bluey purple,false
+65,bluish,false
+66,bluish green,false
+67,bluish grey,false
+68,bluish purple,false
+69,blurple,false
+70,blush,false
+71,blush pink,false
+72,booger,false
+73,booger green,false
+74,bordeaux,false
+75,boring green,false
+76,bottle green,false
+77,brick,false
+78,brick orange,false
+79,brick red,false
+80,bright aqua,false
+81,bright blue,false
+82,bright cyan,false
+83,bright green,false
+84,bright lavender,false
+85,bright light blue,false
+86,bright light green,false
+87,bright lilac,false
+88,bright lime,false
+89,bright lime green,false
+90,bright magenta,false
+91,bright olive,false
+92,bright orange,false
+93,bright pink,false
+94,bright purple,false
+95,bright red,false
+96,bright sea green,false
+97,bright sky blue,false
+98,bright teal,false
+99,bright turquoise,false
+100,bright violet,false
+101,bright yellow,false
+102,bright yellow green,false
+103,british racing green,false
+104,bronze,false
+105,brown,false
+106,brown green,false
+107,brown grey,false
+108,brown orange,false
+109,brown red,false
+110,brown yellow,false
+111,brownish,false
+112,brownish green,false
+113,brownish grey,false
+114,brownish orange,false
+115,brownish pink,false
+116,brownish purple,false
+117,brownish red,false
+118,brownish yellow,false
+119,browny green,false
+120,browny orange,false
+121,bruise,false
+122,bubble gum pink,false
+123,bubblegum,false
+124,bubblegum pink,false
+125,buff,false
+126,burgundy,false
+127,burnt orange,false
+128,burnt red,false
+129,burnt siena,false
+130,burnt sienna,false
+131,burnt umber,false
+132,burnt yellow,false
+133,burple,false
+134,butter,false
+135,butter yellow,false
+136,butterscotch,false
+137,cadet blue,false
+138,camel,false
+139,camo,false
+140,camo green,false
+141,camouflage green,false
+142,canary,false
+143,canary yellow,false
+144,candy pink,false
+145,caramel,false
+146,carmine,false
+147,carnation,false
+148,carnation pink,false
+149,carolina blue,false
+150,celadon,false
+151,celery,false
+152,cement,false
+153,cerise,false
+154,cerulean,false
+155,cerulean blue,false
+156,charcoal,false
+157,charcoal grey,false
+158,chartreuse,false
+159,cherry,false
+160,cherry red,false
+161,chestnut,false
+162,chocolate,false
+163,chocolate brown,false
+164,cinnamon,false
+165,claret,false
+166,clay,false
+167,clay brown,false
+168,clear blue,false
+169,cloudy blue,false
+170,cobalt,false
+171,cobalt blue,false
+172,cocoa,false
+173,coffee,false
+174,cool blue,false
+175,cool green,false
+176,cool grey,false
+177,copper,false
+178,coral,false
+179,coral pink,false
+180,cornflower,false
+181,cornflower blue,false
+182,cranberry,false
+183,cream,false
+184,creme,false
+185,crimson,false
+186,custard,false
+187,cyan,false
+188,dandelion,false
+189,dark,false
+190,dark aqua,false
+191,dark aquamarine,false
+192,dark beige,false
+193,dark blue,false
+194,dark blue green,false
+195,dark blue grey,false
+196,dark brown,false
+197,dark coral,false
+198,dark cream,false
+199,dark cyan,false
+200,dark forest green,false
+201,dark fuchsia,false
+202,dark gold,false
+203,dark grass green,false
+204,dark green,false
+205,dark green blue,false
+206,dark grey,false
+207,dark grey blue,false
+208,dark hot pink,false
+209,dark indigo,false
+210,dark khaki,false
+211,dark lavender,false
+212,dark lilac,false
+213,dark lime,false
+214,dark lime green,false
+215,dark magenta,false
+216,dark maroon,false
+217,dark mauve,false
+218,dark mint,false
+219,dark mint green,false
+220,dark mustard,false
+221,dark navy,false
+222,dark navy blue,false
+223,dark olive,false
+224,dark olive green,false
+225,dark orange,false
+226,dark pastel green,false
+227,dark peach,false
+228,dark periwinkle,false
+229,dark pink,false
+230,dark plum,false
+231,dark purple,false
+232,dark red,false
+233,dark rose,false
+234,dark royal blue,false
+235,dark sage,false
+236,dark salmon,false
+237,dark sand,false
+238,dark sea green,false
+239,dark seafoam,false
+240,dark seafoam green,false
+241,dark sky blue,false
+242,dark slate blue,false
+243,dark tan,false
+244,dark taupe,false
+245,dark teal,false
+246,dark turquoise,false
+247,dark violet,false
+248,dark yellow,false
+249,dark yellow green,false
+250,darkblue,false
+251,darkgreen,false
+252,darkish blue,false
+253,darkish green,false
+254,darkish pink,false
+255,darkish purple,false
+256,darkish red,false
+257,deep aqua,false
+258,deep blue,false
+259,deep brown,false
+260,deep green,false
+261,deep lavender,false
+262,deep lilac,false
+263,deep magenta,false
+264,deep orange,false
+265,deep pink,false
+266,deep purple,false
+267,deep red,false
+268,deep rose,false
+269,deep sea blue,false
+270,deep sky blue,false
+271,deep teal,false
+272,deep turquoise,false
+273,deep violet,false
+274,denim,false
+275,denim blue,false
+276,desert,false
+277,diarrhea,false
+278,dirt,false
+279,dirt brown,false
+280,dirty blue,false
+281,dirty green,false
+282,dirty orange,false
+283,dirty pink,false
+284,dirty purple,false
+285,dirty yellow,false
+286,dodger blue,false
+287,drab,false
+288,drab green,false
+289,dried blood,false
+290,duck egg blue,false
+291,dull blue,false
+292,dull brown,false
+293,dull green,false
+294,dull orange,false
+295,dull pink,false
+296,dull purple,false
+297,dull red,false
+298,dull teal,false
+299,dull yellow,false
+300,dusk,false
+301,dusk blue,false
+302,dusky blue,false
+303,dusky pink,false
+304,dusky purple,false
+305,dusky rose,false
+306,dust,false
+307,dusty blue,false
+308,dusty green,false
+309,dusty lavender,false
+310,dusty orange,false
+311,dusty pink,false
+312,dusty purple,false
+313,dusty red,false
+314,dusty rose,false
+315,dusty teal,false
+316,earth,false
+317,easter green,false
+318,easter purple,false
+319,ecru,false
+320,egg shell,false
+321,eggplant,false
+322,eggplant purple,false
+323,eggshell,false
+324,eggshell blue,false
+325,electric blue,false
+326,electric green,false
+327,electric lime,false
+328,electric pink,false
+329,electric purple,false
+330,emerald,false
+331,emerald green,false
+332,evergreen,false
+333,faded blue,false
+334,faded green,false
+335,faded orange,false
+336,faded pink,false
+337,faded purple,false
+338,faded red,false
+339,faded yellow,false
+340,fawn,false
+341,fern,false
+342,fern green,false
+343,fire engine red,false
+344,flat blue,false
+345,flat green,false
+346,fluorescent green,false
+347,fluro green,false
+348,foam green,false
+349,forest,false
+350,forest green,false
+351,forrest green,false
+352,french blue,false
+353,fresh green,false
+354,frog green,false
+355,fuchsia,false
+356,gold,false
+357,golden,false
+358,golden brown,false
+359,golden rod,false
+360,golden yellow,false
+361,goldenrod,false
+362,grape,false
+363,grape purple,false
+364,grapefruit,false
+365,grass,false
+366,grass green,false
+367,grassy green,false
+368,green,false
+369,green apple,false
+370,green blue,false
+371,green brown,false
+372,green grey,false
+373,green teal,false
+374,green yellow,false
+375,green/blue,false
+376,green/yellow,false
+377,greenblue,false
+378,greenish,false
+379,greenish beige,false
+380,greenish blue,false
+381,greenish brown,false
+382,greenish cyan,false
+383,greenish grey,false
+384,greenish tan,false
+385,greenish teal,false
+386,greenish turquoise,false
+387,greenish yellow,false
+388,greeny blue,false
+389,greeny brown,false
+390,greeny grey,false
+391,greeny yellow,false
+392,grey,false
+393,grey blue,false
+394,grey brown,false
+395,grey green,false
+396,grey pink,false
+397,grey purple,false
+398,grey teal,false
+399,grey/blue,false
+400,grey/green,false
+401,greyblue,false
+402,greyish,false
+403,greyish blue,false
+404,greyish brown,false
+405,greyish green,false
+406,greyish pink,false
+407,greyish purple,false
+408,greyish teal,false
+409,gross green,false
+410,gunmetal,false
+411,hazel,false
+412,heather,false
+413,heliotrope,false
+414,highlighter green,false
+415,hospital green,false
+416,hot green,false
+417,hot magenta,false
+418,hot pink,false
+419,hot purple,false
+420,hunter green,false
+421,ice,false
+422,ice blue,false
+423,icky green,false
+424,indian red,false
+425,indigo,false
+426,indigo blue,false
+427,iris,false
+428,irish green,false
+429,ivory,false
+430,jade,false
+431,jade green,false
+432,jungle green,false
+433,kelley green,false
+434,kelly green,false
+435,kermit green,false
+436,key lime,false
+437,khaki,false
+438,khaki green,false
+439,kiwi,false
+440,kiwi green,false
+441,lavender,false
+442,lavender blue,false
+443,lavender pink,false
+444,lawn green,false
+445,leaf,false
+446,leaf green,false
+447,leafy green,false
+448,leather,false
+449,lemon,false
+450,lemon green,false
+451,lemon lime,false
+452,lemon yellow,false
+453,lichen,false
+454,light aqua,false
+455,light aquamarine,false
+456,light beige,false
+457,light blue,false
+458,light blue green,false
+459,light blue grey,false
+460,light bluish green,false
+461,light bright green,false
+462,light brown,false
+463,light burgundy,false
+464,light cyan,false
+465,light eggplant,false
+466,light forest green,false
+467,light gold,false
+468,light grass green,false
+469,light green,false
+470,light green blue,false
+471,light greenish blue,false
+472,light grey,false
+473,light grey blue,false
+474,light grey green,false
+475,light indigo,false
+476,light khaki,false
+477,light lavendar,false
+478,light lavender,false
+479,light light blue,false
+480,light light green,false
+481,light lilac,false
+482,light lime,false
+483,light lime green,false
+484,light magenta,false
+485,light maroon,false
+486,light mauve,false
+487,light mint,false
+488,light mint green,false
+489,light moss green,false
+490,light mustard,false
+491,light navy,false
+492,light navy blue,false
+493,light neon green,false
+494,light olive,false
+495,light olive green,false
+496,light orange,false
+497,light pastel green,false
+498,light pea green,false
+499,light peach,false
+500,light periwinkle,false
+501,light pink,false
+502,light plum,false
+503,light purple,false
+504,light red,false
+505,light rose,false
+506,light royal blue,false
+507,light sage,false
+508,light salmon,false
+509,light sea green,false
+510,light seafoam,false
+511,light seafoam green,false
+512,light sky blue,false
+513,light tan,false
+514,light teal,false
+515,light turquoise,false
+516,light urple,false
+517,light violet,false
+518,light yellow,false
+519,light yellow green,false
+520,light yellowish green,false
+521,lightblue,false
+522,lighter green,false
+523,lighter purple,false
+524,lightgreen,false
+525,lightish blue,false
+526,lightish green,false
+527,lightish purple,false
+528,lightish red,false
+529,lilac,false
+530,liliac,false
+531,lime,false
+532,lime green,false
+533,lime yellow,false
+534,lipstick,false
+535,lipstick red,false
+536,macaroni and cheese,false
+537,magenta,false
+538,mahogany,false
+539,maize,false
+540,mango,false
+541,manilla,false
+542,marigold,false
+543,marine,false
+544,marine blue,false
+545,maroon,false
+546,mauve,false
+547,medium blue,false
+548,medium brown,false
+549,medium green,false
+550,medium grey,false
+551,medium pink,false
+552,medium purple,false
+553,melon,false
+554,merlot,false
+555,metallic blue,false
+556,mid blue,false
+557,mid green,false
+558,midnight,false
+559,midnight blue,false
+560,midnight purple,false
+561,military green,false
+562,milk chocolate,false
+563,mint,false
+564,mint green,false
+565,minty green,false
+566,mocha,false
+567,moss,false
+568,moss green,false
+569,mossy green,false
+570,mud,false
+571,mud brown,false
+572,mud green,false
+573,muddy brown,false
+574,muddy green,false
+575,muddy yellow,false
+576,mulberry,false
+577,murky green,false
+578,mushroom,false
+579,mustard,false
+580,mustard brown,false
+581,mustard green,false
+582,mustard yellow,false
+583,muted blue,false
+584,muted green,false
+585,muted pink,false
+586,muted purple,false
+587,nasty green,false
+588,navy,false
+589,navy blue,false
+590,navy green,false
+591,neon blue,false
+592,neon green,false
+593,neon pink,false
+594,neon purple,false
+595,neon red,false
+596,neon yellow,false
+597,nice blue,false
+598,night blue,false
+599,ocean,false
+600,ocean blue,false
+601,ocean green,false
+602,ocher,false
+603,ochre,false
+604,ocre,false
+605,off blue,false
+606,off green,false
+607,off white,false
+608,off yellow,false
+609,old pink,false
+610,old rose,false
+611,olive,false
+612,olive brown,false
+613,olive drab,false
+614,olive green,false
+615,olive yellow,false
+616,orange,false
+617,orange brown,false
+618,orange pink,false
+619,orange red,false
+620,orange yellow,false
+621,orangeish,false
+622,orangered,false
+623,orangey brown,false
+624,orangey red,false
+625,orangey yellow,false
+626,orangish,false
+627,orangish brown,false
+628,orangish red,false
+629,orchid,false
+630,pale,false
+631,pale aqua,false
+632,pale blue,false
+633,pale brown,false
+634,pale cyan,false
+635,pale gold,false
+636,pale green,false
+637,pale grey,false
+638,pale lavender,false
+639,pale light green,false
+640,pale lilac,false
+641,pale lime,false
+642,pale lime green,false
+643,pale magenta,false
+644,pale mauve,false
+645,pale olive,false
+646,pale olive green,false
+647,pale orange,false
+648,pale peach,false
+649,pale pink,false
+650,pale purple,false
+651,pale red,false
+652,pale rose,false
+653,pale salmon,false
+654,pale sky blue,false
+655,pale teal,false
+656,pale turquoise,false
+657,pale violet,false
+658,pale yellow,false
+659,parchment,false
+660,pastel blue,false
+661,pastel green,false
+662,pastel orange,false
+663,pastel pink,false
+664,pastel purple,false
+665,pastel red,false
+666,pastel yellow,false
+667,pea,false
+668,pea green,false
+669,pea soup,false
+670,pea soup green,false
+671,peach,false
+672,peachy pink,false
+673,peacock blue,false
+674,pear,false
+675,periwinkle,false
+676,periwinkle blue,false
+677,perrywinkle,false
+678,petrol,false
+679,pig pink,false
+680,pine,false
+681,pine green,false
+682,pink,false
+683,pink purple,false
+684,pink red,false
+685,pink/purple,false
+686,pinkish,false
+687,pinkish brown,false
+688,pinkish grey,false
+689,pinkish orange,false
+690,pinkish purple,false
+691,pinkish red,false
+692,pinkish tan,false
+693,pinky,false
+694,pinky purple,false
+695,pinky red,false
+696,piss yellow,false
+697,pistachio,false
+698,plum,false
+699,plum purple,false
+700,poison green,false
+701,poo,false
+702,poo brown,false
+703,poop,false
+704,poop brown,false
+705,poop green,false
+706,powder blue,false
+707,powder pink,false
+708,primary blue,false
+709,prussian blue,false
+710,puce,false
+711,puke,false
+712,puke brown,false
+713,puke green,false
+714,puke yellow,false
+715,pumpkin,false
+716,pumpkin orange,false
+717,pure blue,false
+718,purple,false
+719,purple blue,false
+720,purple brown,false
+721,purple grey,false
+722,purple pink,false
+723,purple red,false
+724,purple/blue,false
+725,purple/pink,false
+726,purpleish,false
+727,purpleish blue,false
+728,purpleish pink,false
+729,purpley,false
+730,purpley blue,false
+731,purpley grey,false
+732,purpley pink,false
+733,purplish,false
+734,purplish blue,false
+735,purplish brown,false
+736,purplish grey,false
+737,purplish pink,false
+738,purplish red,false
+739,purply,false
+740,purply blue,false
+741,purply pink,false
+742,putty,false
+743,racing green,false
+744,radioactive green,false
+745,raspberry,false
+746,raw sienna,false
+747,raw umber,false
+748,really light blue,false
+749,red,false
+750,red brown,false
+751,red orange,false
+752,red pink,false
+753,red purple,false
+754,red violet,false
+755,red wine,false
+756,reddish,false
+757,reddish brown,false
+758,reddish grey,false
+759,reddish orange,false
+760,reddish pink,false
+761,reddish purple,false
+762,reddy brown,false
+763,rich blue,false
+764,rich purple,false
+765,robin egg blue,false
+766,robin's egg,false
+767,robin's egg blue,false
+768,rosa,false
+769,rose,false
+770,rose pink,false
+771,rose red,false
+772,rosy pink,false
+773,rouge,false
+774,royal,false
+775,royal blue,false
+776,royal purple,false
+777,ruby,false
+778,russet,false
+779,rust,false
+780,rust brown,false
+781,rust orange,false
+782,rust red,false
+783,rusty orange,false
+784,rusty red,false
+785,saffron,false
+786,sage,false
+787,sage green,false
+788,salmon,false
+789,salmon pink,false
+790,sand,false
+791,sand brown,false
+792,sand yellow,false
+793,sandstone,false
+794,sandy,false
+795,sandy brown,false
+796,sandy yellow,false
+797,sap green,false
+798,sapphire,false
+799,scarlet,false
+800,sea,false
+801,sea blue,false
+802,sea green,false
+803,seafoam,false
+804,seafoam blue,false
+805,seafoam green,false
+806,seaweed,false
+807,seaweed green,false
+808,sepia,false
+809,shamrock,false
+810,shamrock green,false
+811,shit,false
+812,shit brown,false
+813,shit green,false
+814,shocking pink,false
+815,sick green,false
+816,sickly green,false
+817,sickly yellow,false
+818,sienna,false
+819,silver,false
+820,sky,false
+821,sky blue,false
+822,slate,false
+823,slate blue,false
+824,slate green,false
+825,slate grey,false
+826,slime green,false
+827,snot,false
+828,snot green,false
+829,soft blue,false
+830,soft green,false
+831,soft pink,false
+832,soft purple,false
+833,spearmint,false
+834,spring green,false
+835,spruce,false
+836,squash,false
+837,steel,false
+838,steel blue,false
+839,steel grey,false
+840,stone,false
+841,stormy blue,false
+842,straw,false
+843,strawberry,false
+844,strong blue,false
+845,strong pink,false
+846,sun yellow,false
+847,sunflower,false
+848,sunflower yellow,false
+849,sunny yellow,false
+850,sunshine yellow,false
+851,swamp,false
+852,swamp green,false
+853,tan,false
+854,tan brown,false
+855,tan green,false
+856,tangerine,false
+857,taupe,false
+858,tea,false
+859,tea green,false
+860,teal,false
+861,teal blue,false
+862,teal green,false
+863,tealish,false
+864,tealish green,false
+865,terra cotta,false
+866,terracota,false
+867,terracotta,false
+868,tiffany blue,false
+869,tomato,false
+870,tomato red,false
+871,topaz,false
+872,toupe,false
+873,toxic green,false
+874,tree green,false
+875,true blue,false
+876,true green,false
+877,turquoise,false
+878,turquoise blue,false
+879,turquoise green,false
+880,turtle green,false
+881,twilight,false
+882,twilight blue,false
+883,ugly blue,false
+884,ugly brown,false
+885,ugly green,false
+886,ugly pink,false
+887,ugly purple,false
+888,ugly yellow,false
+889,ultramarine,false
+890,ultramarine blue,false
+891,umber,false
+892,velvet,false
+893,vermillion,false
+894,very dark blue,false
+895,very dark brown,false
+896,very dark green,false
+897,very dark purple,false
+898,very light blue,false
+899,very light brown,false
+900,very light green,false
+901,very light pink,false
+902,very light purple,false
+903,very pale blue,false
+904,very pale green,false
+905,vibrant blue,false
+906,vibrant green,false
+907,vibrant purple,false
+908,violet,false
+909,violet blue,false
+910,violet pink,false
+911,violet red,false
+912,viridian,false
+913,vivid blue,false
+914,vivid green,false
+915,vivid purple,false
+916,vomit,false
+917,vomit green,false
+918,vomit yellow,false
+919,warm blue,false
+920,warm brown,false
+921,warm grey,false
+922,warm pink,false
+923,warm purple,false
+924,washed out green,false
+925,water blue,false
+926,watermelon,false
+927,weird green,false
+928,wheat,false
+929,white,false
+930,windows blue,false
+931,wine,false
+932,wine red,false
+933,wintergreen,false
+934,wisteria,false
+935,yellow,false
+936,yellow brown,false
+937,yellow green,false
+938,yellow ochre,false
+939,yellow orange,false
+940,yellow tan,false
+941,yellow/green,false
+942,yellowgreen,false
+943,yellowish,false
+944,yellowish brown,false
+945,yellowish green,false
+946,yellowish orange,false
+947,yellowish tan,false
+948,yellowy brown,false
+949,yellowy green,false
