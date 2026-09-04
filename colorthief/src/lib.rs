@@ -228,7 +228,9 @@ impl<'a> RgbFrame<'a> {
     (0..self.height as usize).flat_map(move |row| {
       let start = row * stride;
       self.rgb[start..start + row_bytes]
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
     })
   }
@@ -351,7 +353,9 @@ impl<'a> Rgb48Frame<'a> {
     (0..self.height as usize).flat_map(move |row| {
       let start = row * stride_u16;
       self.rgb16[start..start + row_u16]
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| [(p[0] >> 8) as u8, (p[1] >> 8) as u8, (p[2] >> 8) as u8])
     })
   }
