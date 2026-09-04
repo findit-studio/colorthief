@@ -119,10 +119,9 @@ pub(crate) mod aarch64_neon {
   #[target_feature(enable = "neon")]
   unsafe fn sum_u32_slice_neon(slice: &[u32]) -> u32 {
     let mut acc = vdupq_n_u64(0);
-    let chunks = slice.chunks_exact(4);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<4>();
     for chunk in chunks {
-      // SAFETY: chunks_exact guarantees 4 u32 = 16 bytes here.
+      // SAFETY: as_chunks::<4> guarantees 4 u32 = 16 bytes here.
       let v32 = unsafe { vld1q_u32(chunk.as_ptr()) };
       // Pairwise add u32×4 → u64×2: (lane0+lane1, lane2+lane3).
       let widened = vpaddlq_u32(v32);
@@ -157,10 +156,9 @@ pub(crate) mod x86_sse41 {
   pub unsafe fn sum_u32_slice(slice: &[u32]) -> u32 {
     let mut acc = _mm_setzero_si128();
     let zero = _mm_setzero_si128();
-    let chunks = slice.chunks_exact(4);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<4>();
     for chunk in chunks {
-      // SAFETY: chunks_exact guarantees 4 u32 = 16 bytes here.
+      // SAFETY: as_chunks::<4> guarantees 4 u32 = 16 bytes here.
       let v32 = unsafe { _mm_loadu_si128(chunk.as_ptr() as *const __m128i) };
       // Zero-extend u32×4 → u64×2 + u64×2 (low pair, high pair).
       let lo64 = _mm_unpacklo_epi32(v32, zero);
@@ -197,10 +195,9 @@ pub(crate) mod x86_avx2 {
   pub unsafe fn sum_u32_slice(slice: &[u32]) -> u32 {
     let mut acc = _mm256_setzero_si256();
     let zero = _mm256_setzero_si256();
-    let chunks = slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<8>();
     for chunk in chunks {
-      // SAFETY: chunks_exact guarantees 8 u32 = 32 bytes here.
+      // SAFETY: as_chunks::<8> guarantees 8 u32 = 32 bytes here.
       let v32 = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
       let lo64 = _mm256_unpacklo_epi32(v32, zero);
       let hi64 = _mm256_unpackhi_epi32(v32, zero);
@@ -238,10 +235,9 @@ pub(crate) mod wasm_simd128 {
   #[target_feature(enable = "simd128")]
   unsafe fn sum_u32_slice_simd128(slice: &[u32]) -> u32 {
     let mut acc = u64x2_splat(0);
-    let chunks = slice.chunks_exact(4);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<4>();
     for chunk in chunks {
-      // SAFETY: chunks_exact guarantees 4 u32 = 16 bytes here.
+      // SAFETY: as_chunks::<4> guarantees 4 u32 = 16 bytes here.
       let v32 = unsafe { v128_load(chunk.as_ptr() as *const v128) };
       let lo64 = u64x2_extend_low_u32x4(v32);
       let hi64 = u64x2_extend_high_u32x4(v32);
