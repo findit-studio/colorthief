@@ -19,3 +19,9 @@ Cargo.lock
 **.claude/
 docs/
 
+# `cargo xtask codegen` commit machinery: an OS advisory lock file beside
+# the permanent-id ledger, and the staged temporaries both generated
+# artifacts are written to before being renamed into place. Neither is
+# ever part of a commit; a stray staged file means a run died mid-commit.
+colorthief-dataset/assets/color_ids.csv.lock
+**/*.staged-*

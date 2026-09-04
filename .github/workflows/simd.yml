@@ -61,6 +61,13 @@ jobs:
   # checked-in generated source — including the 32³ CIEDE2000
   # candidate-set LUT, which is rebuilt from the same CSV but takes
   # ~3 minutes of rayon-parallel CIEDE2000 sweeps to recompute.
+  #
+  # `assets/color_ids.csv` — the permanent-id ledger — is checked with
+  # it, and is the more important of the two: the generator *mints* into
+  # that file, so a CSV row with no ledger entry would otherwise get an
+  # id here in CI that never reaches the repository, and the next run
+  # would mint a different one. Diffing it makes an unminted entry a
+  # loud failure instead of a silently unstable id.
   codegen-up-to-date:
     name: codegen-up-to-date
     runs-on: ubuntu-latest
@@ -73,11 +80,22 @@ jobs:
         # rather than ~20 min in debug. The xtask itself is build-time
         # only, so the longer release-profile compile pays for itself.
         run: cargo run --release -p xtask -- codegen
-      - name: git diff --quiet -- generated.rs
+      - name: generated.rs + color_ids.csv unchanged and tracked
+        # `git status --porcelain`, not `git diff`: a ledger deleted in a
+        # commit and recreated by the codegen step above comes back
+        # UNTRACKED, which `git diff` does not report — and a recreated
+        # ledger has lost every retired id, freeing those numbers to be
+        # reminted for different colors. Untracked output must fail here.
         run: |
-          if ! git diff --quiet -- colorthief-dataset/src/generated.rs; then
-            echo "::error::generated.rs is out of sync with assets/color_hierarchy.csv — run 'cargo run --release -p xtask -- codegen' and commit the result."
-            git diff -- colorthief-dataset/src/generated.rs
+          git ls-files --error-unmatch colorthief-dataset/assets/color_ids.csv > /dev/null || {
+            echo "::error::colorthief-dataset/assets/color_ids.csv is not tracked. The permanent-id ledger is the only record of which ids have been handed out; it must be committed."
+            exit 1
+          }
+          DRIFT=$(git status --porcelain -- colorthief-dataset/src/generated.rs colorthief-dataset/assets/color_ids.csv)
+          if [ -n "$DRIFT" ]; then
+            echo "::error::generated.rs / color_ids.csv are out of sync with assets/color_hierarchy.csv — run 'cargo run --release -p xtask -- codegen' and commit the result."
+            echo "$DRIFT"
+            git diff -- colorthief-dataset/src/generated.rs colorthief-dataset/assets/color_ids.csv
             exit 1
           fi
 

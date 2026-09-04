@@ -18,7 +18,8 @@ homepage = "https://github.com/findit-ai/colorthief"
 [workspace.dependencies]
 thiserror = { version = "2", default-features = false }
 
-colorthief-dataset = { version = "0.1", path = "colorthief-dataset", default-features = false }
+
+colorthief-dataset = { version = "0.2", path = "colorthief-dataset", default-features = false }
 
 [profile.bench]
 opt-level = 3
@@ -33,11 +34,6 @@ rpath = false
 [workspace.lints.rust]
 rust_2018_idioms = "warn"
 single_use_lifetimes = "warn"
-# `colorthief_force_scalar` and `colorthief_disable_avx2` are coverage-side
-# tier-forcing flags consumed by `colorthief-dataset/src/nearest/mod.rs`
-# (mirrors colconv's `--cfg colconv_force_scalar` etc.). Coverage workflows
-# pass them via `RUSTFLAGS` to exercise each branch of the SIMD dispatch
-# cascade — see `.github/workflows/coverage.yml`.
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(all_tests)',
   'cfg(tarpaulin)',

@@ -14,6 +14,33 @@
 //! the query plus 950 squared-distance comparisons (no `sqrt` — squared
 //! distance preserves ordering).
 //!
+//! # Permanent ids
+//!
+//! Every entry carries a [`ColorId`] — a permanent, stable handle you can
+//! store and resolve back to the entry with [`Color::from_id`]. The pair
+//! ([`Color::id`], [`Color::from_id`]) is a bijection onto the assigned
+//! ids, which is what lets a database, an index, or a wire format keep a
+//! two-byte reference to a named color instead of minting an identifier
+//! of its own.
+//!
+//! The ids obey one discipline, and it is the reason they are worth
+//! storing:
+//!
+//! - An id is assigned once and **never changes**. Correcting an entry's
+//!   name, design/common columns, RGB, hex, family or kind keeps its id.
+//! - A **deleted entry's id is never reused**. It stays retired;
+//!   [`Color::from_id`] returns `None` for it forever after.
+//! - A **new entry mints a fresh id**, above every id ever assigned.
+//!
+//! Ids start at 1, so `ColorId::new(0)` is never a valid entry and a
+//! zeroed column is always detectably wrong. The assignment lives in
+//! `assets/color_ids.csv` and is pinned by the crate's tests: a
+//! regeneration that renumbers anything fails them loudly.
+//!
+//! An id is **not** a position in [`COLORS`]. Retirements make the two
+//! diverge, and only the id is stable across dataset revisions — index
+//! into [`COLORS`] for iteration, store a [`ColorId`] for reference.
+//!
 //! # Distance metric
 //!
 //! Choose via [`Algorithm`]; the default ([`Algorithm::Ciede2000Exact`])
@@ -41,10 +68,11 @@
 mod generated;
 mod nearest;
 
+use generated::BY_ID;
 pub use generated::{COLORS, Family, Kind};
-// `Algorithm` is defined below alongside `Color`; re-exported to
-// crate root for ergonomics — `colorthief_dataset::Algorithm` is
-// where users expect to find it.
+// `Algorithm` and `ColorId` are defined below alongside `Color`;
+// re-exported to crate root for ergonomics —
+// `colorthief_dataset::Algorithm` is where users expect to find it.
 
 /// **Not a stable API.**
 ///
@@ -103,15 +131,82 @@ pub mod __bench {
   }
 }
 
+/// A permanent, stable handle on one [`Color`] in the dataset.
+///
+/// Store this — not a name, not a hex string, not a [`COLORS`] index —
+/// when something outside the crate needs to refer to a palette entry
+/// across time: a database column, a search index, a wire message.
+/// [`Color::from_id`] resolves it back.
+///
+/// # The guarantee
+///
+/// An id is assigned once and never changes; a corrected entry keeps
+/// its id, a retired entry's id is never handed out again, and a new
+/// entry mints a fresh one. See the [crate docs](crate#permanent-ids)
+/// for the full discipline.
+///
+/// Ids start at 1. `ColorId::new(0)` is well-formed but is never an
+/// assigned id, so a zeroed column always fails to resolve rather than
+/// silently naming the first entry.
+///
+/// # Not a validated type
+///
+/// Constructing a `ColorId` asserts nothing — any `u16` makes one, and
+/// unassigned and retired ids are both representable. [`Color::from_id`]
+/// is the total lookup that decides: it answers `None` for every id the
+/// dataset does not carry.
+///
+/// ```
+/// use colorthief_dataset::{Color, ColorId};
+///
+/// let entry = Color::all()[0];
+/// let stored: u16 = entry.id().get();
+///
+/// // ... a round trip through a database column, a wire format, a file ...
+/// let recovered = Color::from_id(ColorId::new(stored)).expect("assigned id");
+/// assert_eq!(recovered.name(), entry.name());
+///
+/// // 0 is never assigned.
+/// assert!(Color::from_id(ColorId::new(0)).is_none());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct ColorId(u16);
+
+impl ColorId {
+  /// Wrap a raw id — typically one read back out of storage.
+  ///
+  /// Performs no validation; see the [type docs](Self) for why, and
+  /// [`Color::from_id`] for the lookup that does decide.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn new(id: u16) -> Self {
+    Self(id)
+  }
+
+  /// The raw id, for handing to storage.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn get(&self) -> u16 {
+    self.0
+  }
+}
+
+impl core::fmt::Display for ColorId {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    core::fmt::Display::fmt(&self.0, f)
+  }
+}
+
 /// One named entry in the xkcd color hierarchy.
 ///
 /// Carries every column from the upstream `color_hierarchy.csv`:
 /// xkcd / design / common name, hex, and RGB triples for each level,
 /// plus the family / kind / neutrality classification. The xkcd LAB
 /// triple is pre-computed at codegen time for nearest-neighbor lookup
-/// in [`Self::nearest_to`].
+/// in [`Self::nearest_to`], and a permanent [`ColorId`] for storing a
+/// reference to the entry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
+  pub(crate) id: ColorId,
   pub(crate) name: &'static str,
   pub(crate) hex: &'static str,
   pub(crate) rgb: [u8; 3],
@@ -128,6 +223,50 @@ pub struct Color {
 }
 
 impl Color {
+  /// This entry's permanent id — the handle to store when something
+  /// outside the crate needs to name it later.
+  ///
+  /// Round-trips through [`Self::from_id`] for every entry in the
+  /// dataset. See the [crate docs](crate#permanent-ids) for what the
+  /// permanence guarantee does and does not cover.
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn id(&self) -> ColorId {
+    self.id
+  }
+
+  /// The entry carrying `id`, or `None` if the dataset has no such id.
+  ///
+  /// Total over every `u16`: unassigned ids, ids retired by a past
+  /// dataset revision, and the reserved 0 all answer `None` rather than
+  /// resolving to some neighbouring color.
+  ///
+  /// This is the reverse of [`Self::id`], and the pair is a bijection
+  /// onto the assigned ids — `Color::from_id(c.id())` is `c` for every
+  /// `c` in [`Color::all`], and an id that resolves always resolves to
+  /// the entry that claims it.
+  ///
+  /// O(1): a bounds check and one load through a dense id → entry table
+  /// generated alongside [`COLORS`], so resolving an id per row of a
+  /// query result is free next to the nearest-neighbor scan that
+  /// produced it.
+  ///
+  /// ```
+  /// use colorthief_dataset::{Color, ColorId};
+  ///
+  /// let c = Color::nearest_to([189, 108, 72]);
+  /// assert_eq!(Color::from_id(c.id()).map(Color::name), Some(c.name()));
+  /// assert!(Color::from_id(ColorId::new(u16::MAX)).is_none());
+  /// ```
+  #[cfg_attr(not(tarpaulin), inline(always))]
+  pub const fn from_id(id: ColorId) -> Option<&'static Color> {
+    let slot = id.get() as usize;
+    if slot < BY_ID.len() {
+      BY_ID[slot]
+    } else {
+      None
+    }
+  }
+
   /// xkcd-survey name (~950 unique values, e.g. `"burnt orange"`,
   /// `"vermilion"`).
   #[cfg_attr(not(tarpaulin), inline(always))]
@@ -456,6 +595,10 @@ mod tests {
   /// Snapshot the entry count. Acts as a canary if upstream colornamer
   /// updates the CSV: a count change is a deliberate regen, not a silent
   /// drift. Updating this number is the right action when intentional.
+  ///
+  /// A count change means entries arrived or left, so `tests/ids.rs`
+  /// will need updating too — check there that the ids of everything
+  /// that stayed did not move.
   #[test]
   fn dataset_entry_count_matches_csv() {
     assert_eq!(
