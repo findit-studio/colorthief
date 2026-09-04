@@ -88,7 +88,7 @@ jobs:
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Install cargo-tarpaulin
@@ -132,7 +132,7 @@ jobs:
           - linux-x86_64-sse41-max
           - linux-x86_64-scalar
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Download ${{ matrix.label }} report
         uses: actions/download-artifact@v8
         with:
