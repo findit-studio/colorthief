@@ -132,6 +132,7 @@ regeneration that renumbers anything fails loudly.
 | `std` | ✓ | Enables x86_64 runtime CPU-feature detection. |
 | `alloc` | | Forward-compat hook (current API is `no_alloc`). |
 | `lut` | ✓ | The 32³ CIEDE2000 LUT — propagated from `colorthief/lut`. |
+| `serde` | | Hand-written `Serialize`/`Deserialize` for `Algorithm` (its `as_str` word). No `derive` feature, `no_std`-clean. |
 
 ## No-std + no-alloc support
 
