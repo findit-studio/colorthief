@@ -10,7 +10,7 @@ csv          = "1"
 serde        = { version = "1", features = ["derive"] }
 proc-macro2  = "1"
 quote        = "1"
-syn          = "2"
+syn          = "3"
 prettyplease = "0.2"
 heck         = "0.5"
 # Use the same libm the dataset crate uses for runtime LAB conversion, so
