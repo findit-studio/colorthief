@@ -1,6 +1,6 @@
 [package]
 name = "colorthief-dataset"
-version = "0.2.0"
+version = "0.2.1"
 # Pinned to edition 2024 to match the workspace; the crate is `no_std`
 # (and no_alloc) so this is a pure language-version choice.
 edition = "2024"
@@ -30,12 +30,19 @@ std = []
 # (the default). Disable on size-constrained targets (wasm, embedded)
 # via `default-features = false`.
 lut = []
+# Hand-written `Serialize`/`Deserialize` for `Algorithm` (its `as_str`
+# word — no `derive` feature needed, the impls are ~15 lines by hand).
+# `no_std`-clean: never touches `serde`'s `alloc` feature.
+serde = ["dep:serde"]
 
 [dependencies]
 # `core` has no transcendental math (no `powf`, no `cbrtf`); the sRGB→LAB
 # pipeline needs both, so `libm` is a hard dependency in every feature
 # configuration. Pure Rust, ~10 KB, dependency-free itself.
 libm = { version = "0.2", default-features = false }
+# Optional `Algorithm` document face. `default-features = false` and no
+# `derive`: the two impls in `src/lib.rs` are hand-written.
+serde = { version = "1", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
@@ -47,6 +54,8 @@ csv = "1"
 # Property-based tests live in `tests/properties.rs`; we only need the
 # minimum runtime surface (`std`), no fork/timeout/bit-set extras.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# `feature = "serde"` JSON round-trip tests in `src/lib.rs`.
+serde_json = "1"
 
 [[bench]]
 name = "nearest"

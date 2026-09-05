@@ -512,18 +512,241 @@ impl Algorithm {
       Self::Ciede2000Exact => Color::nearest_to_ciede2000_exact(rgb),
     }
   }
+}
 
-  /// Stable string identifier for this algorithm — useful for log
-  /// lines, telemetry, and search-index metadata. Mirrors the
-  /// [`Family::as_str`] / [`Kind::as_str`] convention.
-  #[inline]
-  pub const fn as_str(&self) -> &'static str {
-    match self {
-      Self::DeltaE76 => "delta-e-76",
-      Self::Cie94 => "cie94",
-      Self::Ciede2000 => "ciede2000",
-      Self::Ciede2000Exact => "ciede2000-exact",
+impl core::fmt::Display for Algorithm {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str(self.as_str())
+  }
+}
+
+// R1 Codex finding (medium): `Serialize` delegated to the exhaustive
+// `as_str` match, but `FromStr` (an `if`/`else` chain) and `ROSTER` (a
+// plain array) were two MORE hand-written copies of the same variant
+// list. `as_str`'s match is compiler-checked exhaustive over `Algorithm`
+// (matches within the defining crate are exhaustive regardless of
+// `#[non_exhaustive]`), so a new variant forces it to be updated — but
+// nothing forced `FromStr` or `ROSTER` to follow. A new variant could
+// compile, serialize its word via `Serialize` (which calls `as_str`),
+// and then fail to parse that same word back via `FromStr`/`Deserialize`
+// — a one-way trip through JSON/YAML/TOML.
+//
+// Fix: one authoritative variant-to-word list, generating all three
+// faces so they cannot disagree. `Family`/`Kind::as_str` (this crate's
+// existing precedent) get their single-source guarantee from the xtask
+// codegen tool reading `assets/color_hierarchy.csv` once and emitting
+// every derived face into `generated.rs`; `Algorithm` is a small,
+// hand-authored, non-generated enum, so the equivalent here is a local
+// declarative macro rather than a build-time tool — same principle
+// (generate every face from one list), sized to a four-entry enum
+// instead of a 949-row CSV.
+// R2 Codex finding (medium): the R1 fix forces every VARIANT to have a
+// word (an omitted one fails to compile), but nothing forced the WORDS
+// to be pairwise distinct. `NewVariant => "CIE94"` beside the existing
+// `Cie94 => "cie94"` would compile: `Serialize` emits `"CIE94"` for
+// `NewVariant`, but `FromStr`'s `if`/`else` chain checks `Cie94` first
+// (`"CIE94".eq_ignore_ascii_case("cie94")` is `true`) and silently
+// returns `Cie94` instead — a variant substitution, not a parse error,
+// on the JSON/YAML/TOML round trip.
+//
+// Fix: two compile-time assertions make `algorithm_words!`'s mapping an
+// actual bijection instead of merely a total function. Both run via
+// `const _: () = assert!(...)`, a `no_std`-safe pattern — a
+// `const`-context panic is a compiler diagnostic, never a runtime one,
+// so it needs no panic handler.
+const fn str_eq_ignore_ascii_case(a: &str, b: &str) -> bool {
+  // `str::eq_ignore_ascii_case` is not a `const fn` (as of this crate's
+  // MSRV), so the same byte-for-byte comparison is spelled out by hand
+  // here for use inside a `const` context — but each byte still goes
+  // through `u8::eq_ignore_ascii_case` (also `const fn`) rather than a
+  // manual `to_ascii_lowercase` compare, per `str::as_bytes`/`[u8]`
+  // indexing, which are `const fn` too.
+  let a = a.as_bytes();
+  let b = b.as_bytes();
+  if a.len() != b.len() {
+    return false;
+  }
+  let mut i = 0;
+  while i < a.len() {
+    if !a[i].eq_ignore_ascii_case(&b[i]) {
+      return false;
     }
+    i += 1;
+  }
+  true
+}
+
+/// `true` if no two `words` are equal under ASCII case-insensitive
+/// comparison — the same equality [`core::str::FromStr`] uses to accept
+/// a word. Backs `algorithm_words!`'s compile-time check that two
+/// variants can never share a word: if they did, `FromStr` would
+/// silently return whichever variant's `if` branch runs first, no
+/// matter which variant `Serialize` actually emitted the word for.
+const fn pairwise_unique_ignore_ascii_case(words: &[&str]) -> bool {
+  let mut i = 0;
+  while i < words.len() {
+    let mut j = i + 1;
+    while j < words.len() {
+      if str_eq_ignore_ascii_case(words[i], words[j]) {
+        return false;
+      }
+      j += 1;
+    }
+    i += 1;
+  }
+  true
+}
+
+/// `true` if no two `u8` values repeat. Backs `algorithm_words!`'s
+/// compile-time check that no `Algorithm` variant identifier is listed
+/// twice: since `Algorithm` is `#[repr(u8)]`, two entries naming the
+/// same variant produce the same discriminant here, independently of
+/// whether the resulting duplicate `as_str` match arm also happens to
+/// be caught by the `unreachable_patterns` lint (which this workspace
+/// only denies under `-D warnings`, not by default).
+const fn pairwise_unique_u8(values: &[u8]) -> bool {
+  let mut i = 0;
+  while i < values.len() {
+    let mut j = i + 1;
+    while j < values.len() {
+      if values[i] == values[j] {
+        return false;
+      }
+      j += 1;
+    }
+    i += 1;
+  }
+  true
+}
+
+/// Declares every `Algorithm` variant and its [`Algorithm::as_str`] word
+/// exactly once, and generates the three faces that must agree with each
+/// other from that single list: `as_str` (still an ordinary `match`, so
+/// this crate fails to compile the moment a variant is added here
+/// without a word), [`core::str::FromStr`], and [`ROSTER`].
+///
+/// Two compile-time assertions make the variant/word mapping an actual
+/// bijection: every word belongs to exactly one variant (enforced by
+/// [`pairwise_unique_ignore_ascii_case`] over the same case-insensitive
+/// equality `FromStr` parses with), and no variant is listed twice
+/// (enforced by [`pairwise_unique_u8`] over the `#[repr(u8)]`
+/// discriminants, independent of `unreachable_patterns` lint level).
+macro_rules! algorithm_words {
+  ($( $variant:ident => $word:literal ),+ $(,)?) => {
+    impl Algorithm {
+      /// Stable string identifier for this algorithm — useful for log
+      /// lines, telemetry, and search-index metadata. Mirrors the
+      /// [`Family::as_str`] / [`Kind::as_str`] convention.
+      #[inline]
+      pub const fn as_str(&self) -> &'static str {
+        match self {
+          $( Self::$variant => $word, )+
+        }
+      }
+    }
+
+    impl core::str::FromStr for Algorithm {
+      type Err = ParseAlgorithmError;
+
+      fn from_str(s: &str) -> Result<Self, Self::Err> {
+        $(
+          if s.eq_ignore_ascii_case($word) {
+            return Ok(Self::$variant);
+          }
+        )+
+        Err(ParseAlgorithmError(()))
+      }
+    }
+
+    /// Every accepted [`Algorithm::as_str`] word, in declaration order —
+    /// generated by `algorithm_words!` from the same list as `as_str`
+    /// and [`core::str::FromStr`]. Backs [`ParseAlgorithmError`]'s
+    /// message and, behind `feature = "serde"`, serde's own
+    /// `unknown_variant` refusal.
+    const ROSTER: &[&str] = &[ $( $word ),+ ];
+
+    const _: () = assert!(
+      pairwise_unique_ignore_ascii_case(ROSTER),
+      "algorithm_words!: words must be unique ignoring ASCII case (FromStr could not tell them apart)",
+    );
+
+    const _: () = assert!(
+      pairwise_unique_u8(&[ $( Algorithm::$variant as u8 ),+ ]),
+      "algorithm_words!: the same Algorithm variant was listed more than once",
+    );
+  };
+}
+
+algorithm_words! {
+  DeltaE76 => "delta-e-76",
+  Cie94 => "cie94",
+  Ciede2000 => "ciede2000",
+  Ciede2000Exact => "ciede2000-exact",
+}
+
+/// [`Algorithm::from_str`] rejects anything but the four
+/// [`Algorithm::as_str`] words (ASCII case-insensitive).
+///
+/// Deliberately opaque: naming the caller's rejected word back would
+/// need an owned copy — the input `&str`'s lifetime cannot flow through
+/// [`core::str::FromStr::Err`], so holding it at all means allocating
+/// one, which this type (`Copy`, feature-free, `no_std`) does not do.
+/// [`Display`](core::fmt::Display) names the accepted roster instead —
+/// `'static`, so no allocation is needed to hold or hand it out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseAlgorithmError(());
+
+impl core::fmt::Display for ParseAlgorithmError {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str("unknown algorithm; expected one of ")?;
+    for (i, word) in ROSTER.iter().enumerate() {
+      if i > 0 {
+        f.write_str(", ")?;
+      }
+      write!(f, "{word:?}")?;
+    }
+    Ok(())
+  }
+}
+
+impl core::error::Error for ParseAlgorithmError {}
+
+#[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+impl serde::Serialize for Algorithm {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    serializer.serialize_str(self.as_str())
+  }
+}
+
+#[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+impl<'de> serde::Deserialize<'de> for Algorithm {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    struct AlgorithmVisitor;
+
+    impl serde::de::Visitor<'_> for AlgorithmVisitor {
+      type Value = Algorithm;
+
+      fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("an algorithm name")
+      }
+
+      fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+      where
+        E: serde::de::Error,
+      {
+        v.parse().map_err(|_| E::unknown_variant(v, ROSTER))
+      }
+    }
+
+    deserializer.deserialize_str(AlgorithmVisitor)
   }
 }
 
@@ -666,5 +889,119 @@ mod tests {
     assert!(lab[0].abs() < 1e-6, "L was {}", lab[0]);
     assert!(lab[1].abs() < 1e-6, "a was {}", lab[1]);
     assert!(lab[2].abs() < 1e-6, "b was {}", lab[2]);
+  }
+
+  const ALL_ALGORITHMS: [Algorithm; 4] = [
+    Algorithm::DeltaE76,
+    Algorithm::Cie94,
+    Algorithm::Ciede2000,
+    Algorithm::Ciede2000Exact,
+  ];
+
+  /// Feature-free: `Display` is exactly `as_str`, for every variant.
+  #[test]
+  fn algorithm_display_matches_as_str() {
+    for algo in ALL_ALGORITHMS {
+      assert_eq!(algo.to_string(), algo.as_str());
+    }
+  }
+
+  /// Feature-free: every `as_str` word parses back to its variant.
+  #[test]
+  fn algorithm_fromstr_roundtrips_all_words() {
+    for algo in ALL_ALGORITHMS {
+      assert_eq!(algo.as_str().parse::<Algorithm>().unwrap(), algo);
+    }
+  }
+
+  /// Feature-free: parsing ignores ASCII case.
+  #[test]
+  fn algorithm_fromstr_is_case_insensitive() {
+    assert_eq!(
+      "DELTA-E-76".parse::<Algorithm>().unwrap(),
+      Algorithm::DeltaE76
+    );
+    assert_eq!("Cie94".parse::<Algorithm>().unwrap(), Algorithm::Cie94);
+    assert_eq!(
+      "CIEDE2000".parse::<Algorithm>().unwrap(),
+      Algorithm::Ciede2000
+    );
+    assert_eq!(
+      "Ciede2000-Exact".parse::<Algorithm>().unwrap(),
+      Algorithm::Ciede2000Exact,
+    );
+  }
+
+  /// Feature-free: a near-miss is rejected, and the refusal names every
+  /// word in the roster rather than echoing the rejected input back
+  /// (see [`ParseAlgorithmError`] for why).
+  #[test]
+  fn algorithm_fromstr_rejects_unknown_names_roster() {
+    let message = "ciede-2000".parse::<Algorithm>().unwrap_err().to_string();
+    for &word in ROSTER {
+      assert!(message.contains(word), "{message:?} does not name {word:?}");
+    }
+  }
+
+  /// Guards `algorithm_words!`'s completeness independently of the
+  /// macro-generated `as_str` match: the inline match below fails to
+  /// compile the moment `Algorithm` gains a variant that
+  /// `algorithm_words!` (and therefore `ROSTER`) does not — the same
+  /// class of gap R1's Codex review found (`as_str` alone updated,
+  /// `FromStr`/`ROSTER` silently left behind).
+  #[test]
+  fn algorithm_roster_covers_every_variant() {
+    for algo in ALL_ALGORITHMS {
+      match algo {
+        Algorithm::DeltaE76
+        | Algorithm::Cie94
+        | Algorithm::Ciede2000
+        | Algorithm::Ciede2000Exact => {}
+      }
+    }
+    assert_eq!(ROSTER.len(), ALL_ALGORITHMS.len());
+  }
+
+  /// The predicate behind `algorithm_words!`'s compile-time
+  /// word-uniqueness check (R2 Codex finding), exercised directly since
+  /// the crate has no `trybuild`-style compile-fail test infrastructure
+  /// to exercise the `const` assertion itself.
+  #[test]
+  fn algorithm_word_uniqueness_helper_is_correct() {
+    assert!(!pairwise_unique_ignore_ascii_case(&["cie94", "CIE94"]));
+    assert!(pairwise_unique_ignore_ascii_case(ROSTER));
+  }
+
+  /// The predicate behind `algorithm_words!`'s compile-time
+  /// variant-uniqueness check, exercised directly for the same reason.
+  #[test]
+  fn algorithm_discriminant_uniqueness_helper_is_correct() {
+    assert!(!pairwise_unique_u8(&[1, 2, 2, 3]));
+    assert!(pairwise_unique_u8(&[0, 1, 2, 3]));
+  }
+
+  /// `feature = "serde"`: every word round-trips through JSON as the
+  /// plain `as_str` string.
+  #[test]
+  #[cfg(feature = "serde")]
+  fn algorithm_serde_json_roundtrips_all_words() {
+    for algo in ALL_ALGORITHMS {
+      let json = serde_json::to_string(&algo).unwrap();
+      assert_eq!(json, format!("\"{}\"", algo.as_str()));
+      assert_eq!(serde_json::from_str::<Algorithm>(&json).unwrap(), algo);
+    }
+  }
+
+  /// `feature = "serde"`: an unrecognized JSON string is refused via
+  /// serde's own `unknown_variant`, which also names the roster.
+  #[test]
+  #[cfg(feature = "serde")]
+  fn algorithm_serde_json_rejects_unknown_names_roster() {
+    let message = serde_json::from_str::<Algorithm>("\"ciede-2000\"")
+      .unwrap_err()
+      .to_string();
+    for &word in ROSTER {
+      assert!(message.contains(word), "{message:?} does not name {word:?}");
+    }
   }
 }

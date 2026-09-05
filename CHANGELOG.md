@@ -1,3 +1,28 @@
+# 0.2.1 (2026-09-05)
+
+## `colorthief-dataset`
+
+- **Text and document faces for `Algorithm`.** `Display` (= `as_str`)
+  and `FromStr` (`type Err = ParseAlgorithmError`), both `core`-only —
+  parsing accepts exactly the four `as_str` words, ASCII
+  case-insensitive, nothing else. `ParseAlgorithmError` is a `Copy`
+  marker: it cannot hold the caller's rejected word (`FromStr::Err`
+  can't borrow the input, and owning a copy needs `alloc`), so its
+  `Display` names the accepted roster instead. `as_str`, `FromStr` and
+  the roster are generated from one variant-to-word list (a local
+  macro) instead of three hand-kept-in-sync copies, so a future variant
+  cannot compile with a word `Serialize` emits but `FromStr`/
+  `Deserialize` cannot parse back. Two compile-time assertions make the
+  mapping an actual bijection: a `const` check rejects two variants
+  sharing a word under the same ASCII case-insensitive equality
+  `FromStr` parses with (otherwise a shared word would silently
+  deserialize to whichever variant's branch runs first), and a second
+  rejects the same variant being listed twice.
+- New `serde` feature (`serde = ["dep:serde"]`): hand-written
+  `Serialize`/`Deserialize` for `Algorithm` — no `derive` feature
+  pulled in. `Deserialize` refuses an unrecognized word via serde's own
+  `unknown_variant`, which also names the roster. `no_std`-clean.
+
 # 0.2.0 (2026-09-04)
 
 Additive across the board — nothing existing changed shape. `Color`
